@@ -11,7 +11,7 @@ exception, so "something did not work" is always structured data a
 caller can branch on, the same shape every time.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel
 
@@ -321,4 +321,75 @@ class SemanticSearchProductsResult(BaseModel):
 class CheckoutToolResult(BaseModel):
     review: Optional[CheckoutReview] = None
     order: Optional[OrderConfirmation] = None
+    error: Optional[ToolError] = None
+
+
+# ---------------------------------------------------------------------------
+# External merchant / affiliate tools (Step 16.5).
+# ---------------------------------------------------------------------------
+
+
+class ExternalOfferSummary(BaseModel):
+    """Customer-safe external offer. Direct merchant URL is intentionally omitted.
+
+    The browser must use Scout's click-tracking endpoint, which records the
+    click and then redirects. External offers never enter the Scout cart.
+    """
+
+    offer_id: str
+    merchant_name: str
+    external_product_id: str
+    product_name: str
+    brand: str
+    category: str
+    description: str
+    price: float
+    currency: str
+    rating: Optional[float] = None
+    review_count: int = 0
+    availability_status: str
+    image_url: Optional[str] = None
+    match_type: Literal["exact", "similar"]
+    match_label: str
+    match_reason: str
+    source_product_id: Optional[str] = None
+    matched_identifier_type: Optional[str] = None
+    relevance_score: float
+    disclosure: str
+
+
+class SearchExternalOffersResult(BaseModel):
+    offers: List[ExternalOfferSummary]
+    count: int
+    error: Optional[ToolError] = None
+
+
+class ExternalOfferDetail(BaseModel):
+    offer_id: str
+    merchant_name: str
+    external_product_id: str
+    product_name: str
+    brand: str
+    category: str
+    description: str
+    price: float
+    currency: str
+    rating: Optional[float] = None
+    review_count: int = 0
+    availability_status: str
+    image_url: Optional[str] = None
+    upc: Optional[str] = None
+    gtin: Optional[str] = None
+    model_number: Optional[str] = None
+    active: bool
+
+
+class GetExternalOfferResult(BaseModel):
+    offer: Optional[ExternalOfferDetail] = None
+    error: Optional[ToolError] = None
+
+
+class TrackAffiliateClickResult(BaseModel):
+    click_id: Optional[str] = None
+    redirect_url: Optional[str] = None
     error: Optional[ToolError] = None

@@ -32,9 +32,11 @@ import sqlite3
 from typing import Any, Dict, List
 
 from scout.mcp.inventory_tools import (
+    check_network_inventory,
     check_store_inventory,
     find_available_substitutes,
     find_nearby_inventory,
+    get_delivery_estimate,
 )
 from scout.orchestration.limits import check_step_budget
 from scout.orchestration.state import EvidenceEntry, RetailGraphState, ToolCallTrace, WorkflowError
@@ -428,5 +430,185 @@ def substitute_search_node(state: RetailGraphState) -> Dict[str, Any]:
         update["errors"] = errors
     update["tool_results"] = tool_results or [
         ToolCallTrace(tool_name="find_available_substitutes", status="success", summary="checked for substitutes")
+    ]
+    return update
+
+
+def network_delivery_search_node(state: RetailGraphState) -> Dict[str, Any]:
+    """Check store-network stock and configured delivery for unfulfilled products.
+
+    This runs only after selected-store and nearby-store checks were weak. The
+    resulting channel is labelled ``delivery`` rather than ``online`` because
+    Scout's current schema models a store-network aggregate, not a separate
+    warehouse or ecommerce inventory source.
+    """
+    limit_update = check_step_budget(state)
+    if limit_update is not None:
+        return limit_update
+
+    update: Dict[str, Any] = {"step_count": state.step_count + 1}
+    needing = products_needing_fulfillment(state)
+    if not needing:
+        update["tool_results"] = [
+            ToolCallTrace(
+                tool_name="check_network_inventory",
+                status="success",
+                summary="no delivery search needed",
+            )
+        ]
+        return update
+
+    candidates_by_id = {candidate.product_id: candidate for candidate in state.product_candidates}
+    inventory_results = list(state.inventory_results)
+    evidence: List[EvidenceEntry] = []
+    errors: List[WorkflowError] = []
+    traces: List[ToolCallTrace] = []
+
+    for product_id in needing:
+        try:
+            network = check_network_inventory(product_id)
+        except sqlite3.Error:
+            errors.append(
+                WorkflowError(
+                    error_type="database_error",
+                    message="A database error occurred while checking delivery inventory.",
+                    agent="inventory",
+                    step="check_network_inventory",
+                )
+            )
+            traces.append(
+                ToolCallTrace(
+                    tool_name="check_network_inventory",
+                    status="error",
+                    summary=f"database error for {product_id}",
+                )
+            )
+            continue
+
+        if network.error is not None:
+            errors.append(
+                WorkflowError(
+                    error_type=network.error.error_type,
+                    message=network.error.message,
+                    agent="inventory",
+                    step="check_network_inventory",
+                )
+            )
+            traces.append(
+                ToolCallTrace(
+                    tool_name="check_network_inventory",
+                    status="error",
+                    summary=network.error.message,
+                )
+            )
+            continue
+
+        traces.append(
+            ToolCallTrace(
+                tool_name="check_network_inventory",
+                status="success",
+                summary=(
+                    f"{product_id}: {network.sellable_quantity} unit(s) across the store network"
+                ),
+            )
+        )
+        if not network.available:
+            continue
+
+        try:
+            delivery = get_delivery_estimate(product_id)
+        except sqlite3.Error:
+            errors.append(
+                WorkflowError(
+                    error_type="database_error",
+                    message="A database error occurred while estimating delivery.",
+                    agent="inventory",
+                    step="get_delivery_estimate",
+                )
+            )
+            traces.append(
+                ToolCallTrace(
+                    tool_name="get_delivery_estimate",
+                    status="error",
+                    summary=f"database error for {product_id}",
+                )
+            )
+            continue
+
+        if delivery.error is not None:
+            errors.append(
+                WorkflowError(
+                    error_type=delivery.error.error_type,
+                    message=delivery.error.message,
+                    agent="inventory",
+                    step="get_delivery_estimate",
+                )
+            )
+            traces.append(
+                ToolCallTrace(
+                    tool_name="get_delivery_estimate",
+                    status="error",
+                    summary=delivery.error.message,
+                )
+            )
+            continue
+        if not delivery.delivery_available or delivery.policy_evidence is None:
+            traces.append(
+                ToolCallTrace(
+                    tool_name="get_delivery_estimate",
+                    status="success",
+                    summary=f"delivery unavailable for {product_id}",
+                )
+            )
+            continue
+
+        product = candidates_by_id.get(product_id)
+        product_name = product.name if product is not None else product_id
+        policy = delivery.policy_evidence
+        result_entry = {
+            "product_id": product_id,
+            "channel": "delivery",
+            "store_id": None,
+            "store_name": None,
+            "sellable_quantity": delivery.sellable_quantity,
+            "contributing_store_ids": delivery.contributing_store_ids,
+            "delivery_min_days": policy.minimum_days,
+            "delivery_max_days": policy.maximum_days,
+            "availability_source": policy.inventory_source,
+        }
+        inventory_results.append(result_entry)
+        evidence.append(
+            EvidenceEntry(
+                source="get_delivery_estimate",
+                claim=(
+                    f"{product_name} ({product_id}) has {delivery.sellable_quantity} unit(s) "
+                    f"available across the Scout store network; standard prototype delivery is "
+                    f"estimated at {policy.minimum_days}-{policy.maximum_days} days"
+                ),
+                data=delivery.model_dump(),
+            )
+        )
+        traces.append(
+            ToolCallTrace(
+                tool_name="get_delivery_estimate",
+                status="success",
+                summary=(
+                    f"{product_id}: configured delivery window "
+                    f"{policy.minimum_days}-{policy.maximum_days} days"
+                ),
+            )
+        )
+
+    update["inventory_results"] = inventory_results
+    if evidence:
+        update["evidence"] = evidence
+    if errors:
+        update["errors"] = errors
+    update["tool_results"] = traces or [
+        ToolCallTrace(
+            tool_name="check_network_inventory",
+            status="success",
+            summary="checked network delivery inventory",
+        )
     ]
     return update

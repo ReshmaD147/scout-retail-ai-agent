@@ -96,8 +96,11 @@ const completedResponse: ChatResponse = {
       sellable_quantity: 7,
       distance_miles: 4.28,
       substitute_for: null,
+      delivery_min_days: null,
+      delivery_max_days: null,
     },
   ],
+  external_offers: [],
   activity_events: [],
   errors: [],
 };

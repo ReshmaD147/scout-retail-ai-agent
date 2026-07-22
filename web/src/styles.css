@@ -742,3 +742,133 @@ a:focus-visible {
   border-color: #86efac;
   background: #f0fdf4;
 }
+
+/* --- Step 16.5 external merchant fallback --- */
+.external-offers {
+  margin-top: 1.5rem;
+  border: 1px solid var(--scout-color-border);
+  border-radius: 0.75rem;
+  padding: 1rem;
+  background: #fafafa;
+}
+
+.external-offers__heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.external-offers__heading h2,
+.external-offers__eyebrow,
+.external-offers__disclosure {
+  margin: 0;
+}
+
+.external-offers__eyebrow {
+  color: var(--scout-color-muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.external-offers__badge {
+  border: 1px solid var(--scout-color-border);
+  border-radius: 999px;
+  padding: 0.25rem 0.55rem;
+  color: var(--scout-color-muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.external-offers__disclosure {
+  margin-top: 0.65rem;
+  color: var(--scout-color-muted);
+  font-size: 0.82rem;
+}
+
+.external-offers__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.external-offer-card {
+  height: 100%;
+  border: 1px solid var(--scout-color-border);
+  border-radius: 0.65rem;
+  overflow: hidden;
+  background: #fff;
+}
+
+.external-offer-card__image {
+  width: 100%;
+  height: 170px;
+  object-fit: contain;
+  background: #f7f7f7;
+}
+
+.external-offer-card__body {
+  padding: 0.85rem;
+}
+
+.external-offer-card__body h3,
+.external-offer-card__merchant,
+.external-offer-card__brand,
+.external-offer-card__price,
+.external-offer-card__rating,
+.external-offer-card__reason {
+  margin: 0 0 0.45rem;
+}
+
+.external-offer-card__match {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.2rem 0.5rem;
+  margin-bottom: 0.55rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.external-offer-card__match--similar {
+  background: #eef2ff;
+  color: #3730a3;
+}
+
+.external-offer-card__match--exact {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.external-offer-card__merchant,
+.external-offer-card__brand,
+.external-offer-card__reason,
+.external-offer-card__rating {
+  color: var(--scout-color-muted);
+  font-size: 0.84rem;
+}
+
+.external-offer-card__price {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.external-offer-card__link {
+  display: inline-block;
+  margin-top: 0.35rem;
+  border-radius: 0.4rem;
+  background: var(--scout-color-primary);
+  color: #fff;
+  padding: 0.55rem 0.75rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.external-offer-card__affiliate-label {
+  display: block;
+  margin-top: 0.35rem;
+  color: var(--scout-color-muted);
+  font-size: 0.72rem;
+}

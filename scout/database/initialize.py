@@ -35,5 +35,5 @@ if __name__ == "__main__":
     initialize_database()
     print(
         "Scout database initialized: catalog, inventory, carts, semantic search, "
-        "checkout, payments, orders, and reservations."
+        "checkout, payments, orders, reservations, and external offers."
     )

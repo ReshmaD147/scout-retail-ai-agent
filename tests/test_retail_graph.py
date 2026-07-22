@@ -28,6 +28,7 @@ import sqlite3
 import pytest
 
 from scout.config import get_settings
+from scout.database.connection import connection_scope
 from scout.mcp.product_tools import get_product_details as _real_get_product_details
 from scout.orchestration.graph import build_retail_graph, run_graph
 from scout.orchestration.limits import SAFE_FAILURE_MESSAGE
@@ -194,3 +195,40 @@ def test_build_retail_graph_compiles_and_is_reusable():
 
     assert first["workflow_status"] == "completed"
     assert second["workflow_status"] == "completed"
+
+
+def test_internal_success_never_triggers_external_fallback():
+    result = run_graph(
+        session_id="S-internal-only",
+        customer_query="Find comfortable work shoes under $100 that I can pick up today near Maple Grove.",
+    )
+
+    assert result.product_candidates
+    assert result.external_offers == []
+    assert all(trace.tool_name != "search_external_offers" for trace in result.tool_results)
+
+
+def test_external_fallback_runs_only_after_all_internal_inventory_is_exhausted():
+    with connection_scope() as connection:
+        connection.execute(
+            "UPDATE inventory SET quantity_available = 0, quantity_reserved = 0"
+        )
+
+    result = run_graph(
+        session_id="S-external-fallback",
+        customer_query="Find comfortable work shoes under $100 that I can pick up today near Maple Grove.",
+    )
+
+    assert result.workflow_status == "completed"
+    assert result.product_candidates == []
+    assert result.external_offers
+    assert len(result.external_offers) <= get_settings().max_external_offers
+    assert all(offer.match_type == "similar" for offer in result.external_offers)
+    assert all(offer.price <= 100 for offer in result.external_offers)
+    assert "selected store" in result.final_response
+    assert "store-network delivery" in result.final_response
+    tool_names = [trace.tool_name for trace in result.tool_results]
+    assert "check_network_inventory" in tool_names
+    assert "find_available_substitutes" in tool_names
+    assert "search_external_offers" in tool_names
+    assert tool_names.index("search_external_offers") > tool_names.index("find_available_substitutes")

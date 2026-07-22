@@ -40,6 +40,33 @@ export interface FulfillmentOption {
   sellable_quantity: number;
   distance_miles: number | null;
   substitute_for: string | null;
+  delivery_min_days: number | null;
+  delivery_max_days: number | null;
+}
+
+
+/** scout/mcp/schemas.py::ExternalOfferSummary */
+export interface ExternalOfferSummary {
+  offer_id: string;
+  merchant_name: string;
+  external_product_id: string;
+  product_name: string;
+  brand: string;
+  category: string;
+  description: string;
+  price: number;
+  currency: string;
+  rating: number | null;
+  review_count: number;
+  availability_status: string;
+  image_url: string | null;
+  match_type: "exact" | "similar";
+  match_label: string;
+  match_reason: string;
+  source_product_id: string | null;
+  matched_identifier_type: string | null;
+  relevance_score: number;
+  disclosure: string;
 }
 
 /** scout/api/schemas/chat.py::ChatError */
@@ -73,6 +100,7 @@ export interface ChatResponse {
   answer: string | null;
   products: ProductSummary[];
   fulfillment_options: FulfillmentOption[];
+  external_offers: ExternalOfferSummary[];
   activity_events: string[];
   errors: ChatError[];
 }

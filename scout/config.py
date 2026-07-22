@@ -138,6 +138,11 @@ class Settings(BaseSettings):
     results." Never padded when fewer valid candidates exist (CLAUDE.md's
     bounded-autonomy principle again: an interface cap, not a target to
     fill)."""
+    max_external_offers: int = Field(default=3, ge=1, le=10)
+    """Hard ceiling on customer-facing mock merchant alternatives returned
+    by the Step 16.5 fallback. External retrieval is a recovery path, not an
+    unlimited marketplace feed, so the default stays aligned with Scout's
+    three-result recommendation interface."""
 
     model_config = SettingsConfigDict(
         env_file=".env",

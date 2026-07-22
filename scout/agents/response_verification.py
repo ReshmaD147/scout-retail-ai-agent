@@ -59,8 +59,9 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from scout.config import get_settings
+from scout.mcp.affiliate_tools import get_external_offer_details
 from scout.mcp.product_tools import get_product_details, get_promotions
-from scout.mcp.schemas import ProductDetail, ProductSummary
+from scout.mcp.schemas import ExternalOfferSummary, ProductDetail, ProductSummary
 from scout.orchestration.limits import SAFE_FAILURE_MESSAGE, check_step_budget
 from scout.orchestration.state import EvidenceEntry, RetailGraphState, ToolCallTrace, WorkflowError
 from scout.services import budget_service
@@ -73,6 +74,7 @@ _NO_RESULTS_MESSAGE = (
 _CHANNEL_TO_EVIDENCE_SOURCE = {
     "selected_store": "check_store_inventory",
     "nearby_store": "find_nearby_inventory",
+    "delivery": "get_delivery_estimate",
     "substitute": "find_available_substitutes",
 }
 """Which tool must have produced the evidence backing each channel -
@@ -312,6 +314,14 @@ def _build_final_response(verified: List[Tuple[ProductSummary, Dict[str, Any]]])
                 f"{candidate.name} (${candidate.price:.2f}) is offered as a substitute for {reference}, "
                 f"with {quantity} unit(s) available for pickup today at {store_name}."
             )
+        elif channel == "delivery":
+            minimum_days = detail.get("delivery_min_days")
+            maximum_days = detail.get("delivery_max_days")
+            lines.append(
+                f"{candidate.name} (${candidate.price:.2f}) has {quantity} unit(s) available across "
+                f"the Scout store network. Standard prototype delivery is estimated at "
+                f"{minimum_days}-{maximum_days} days."
+            )
         else:
             lines.append(
                 f"{candidate.name} (${candidate.price:.2f}) has {quantity} unit(s) available for pickup "
@@ -352,6 +362,128 @@ def _final_response_unsupported_claim(
     return None
 
 
+
+def _verify_external_offer(
+    offer: ExternalOfferSummary, evidence: List[EvidenceEntry]
+) -> List[WorkflowError]:
+    """Re-read a mock merchant offer and verify every displayed core field."""
+    issues: List[WorkflowError] = []
+    marker = f"({offer.offer_id})"
+    matching_evidence = next(
+        (
+            entry
+            for entry in evidence
+            if entry.source == "search_external_offers" and marker in entry.claim
+        ),
+        None,
+    )
+    if matching_evidence is None:
+        return [
+            WorkflowError(
+                error_type="grounding_failure",
+                message=f"{offer.offer_id}: external offer has no search-tool evidence.",
+                agent="verification",
+                step="verify_external_offer",
+            )
+        ]
+
+    details = get_external_offer_details(offer.offer_id)
+    if details.error is not None or details.offer is None:
+        return [
+            WorkflowError(
+                error_type="not_found",
+                message=f"{offer.offer_id}: external offer could not be reverified.",
+                agent="verification",
+                step="verify_external_offer",
+            )
+        ]
+
+    current = details.offer
+    comparisons = (
+        ("merchant", offer.merchant_name, current.merchant_name),
+        ("product name", offer.product_name, current.product_name),
+        ("brand", offer.brand, current.brand),
+        ("category", offer.category, current.category),
+        ("currency", offer.currency, current.currency),
+        ("availability", offer.availability_status, current.availability_status),
+    )
+    for label, claimed, actual in comparisons:
+        if claimed != actual:
+            issues.append(
+                WorkflowError(
+                    error_type="grounding_failure",
+                    message=f"{offer.offer_id}: claimed {label} does not match the merchant feed.",
+                    agent="verification",
+                    step="verify_external_offer",
+                )
+            )
+    if abs(offer.price - current.price) > 0.005:
+        issues.append(
+            WorkflowError(
+                error_type="grounding_failure",
+                message=f"{offer.offer_id}: external price changed before verification.",
+                agent="verification",
+                step="verify_external_offer",
+            )
+        )
+    if not current.active or current.availability_status != "in_stock":
+        issues.append(
+            WorkflowError(
+                error_type="grounding_failure",
+                message=f"{offer.offer_id}: external offer is no longer available.",
+                agent="verification",
+                step="verify_external_offer",
+            )
+        )
+
+    evidence_data = matching_evidence.data
+    if evidence_data.get("match_type") != offer.match_type:
+        issues.append(
+            WorkflowError(
+                error_type="grounding_failure",
+                message=f"{offer.offer_id}: match label does not match search evidence.",
+                agent="verification",
+                step="verify_external_match_label",
+            )
+        )
+    if offer.match_type == "exact":
+        identifier_type = offer.matched_identifier_type
+        identifier_exists = {
+            "UPC": current.upc,
+            "GTIN": current.gtin,
+            "model number": current.model_number,
+        }.get(identifier_type or "")
+        if not identifier_type or not identifier_exists:
+            issues.append(
+                WorkflowError(
+                    error_type="grounding_failure",
+                    message=(
+                        f"{offer.offer_id}: exact external match lacks a verified UPC, GTIN, "
+                        "or model-number basis."
+                    ),
+                    agent="verification",
+                    step="verify_external_match_label",
+                )
+            )
+    return issues
+
+
+def _build_external_response(offers: List[ExternalOfferSummary]) -> str:
+    if all(offer.match_type == "exact" for offer in offers):
+        description = "verified exact external match"
+    elif any(offer.match_type == "exact" for offer in offers):
+        description = "verified external match and similar alternatives"
+    else:
+        description = "similar external alternatives"
+    names = ", ".join(offer.product_name for offer in offers)
+    return (
+        "Scout could not find a fulfillable internal option after checking the selected store, "
+        "nearby stores, store-network delivery, and internal substitutes. "
+        f"Here are {description}: {names}. External offers use demo data, open at the retailer, "
+        "and cannot be added to the Scout cart."
+    )
+
+
 def _request_correction_or_fail(state: RetailGraphState, issues: List[WorkflowError]) -> Dict[str, Any]:
     """Every candidate (or the composed response) failed verification.
 
@@ -372,6 +504,7 @@ def _request_correction_or_fail(state: RetailGraphState, issues: List[WorkflowEr
         update["workflow_status"] = "in_progress"
         update["correction_count"] = state.correction_count + 1
         update["inventory_results"] = []
+        update["external_offers"] = []
         update["tool_results"] = [
             ToolCallTrace(
                 tool_name="response_verification",
@@ -404,6 +537,39 @@ def response_verification_node(state: RetailGraphState) -> Dict[str, Any]:
         return limit_update
 
     update: Dict[str, Any] = {"step_count": state.step_count + 1, "workflow_status": "completed"}
+
+    if not state.product_candidates and state.external_offers:
+        verified_external: List[ExternalOfferSummary] = []
+        external_issues: List[WorkflowError] = []
+        for offer in state.external_offers:
+            offer_issues = _verify_external_offer(offer, state.evidence)
+            if offer_issues:
+                external_issues.extend(offer_issues)
+            else:
+                verified_external.append(offer)
+
+        if verified_external:
+            update["external_offers"] = verified_external
+            update["final_response"] = _build_external_response(verified_external)
+            if external_issues:
+                update["errors"] = external_issues
+            update["tool_results"] = [
+                ToolCallTrace(
+                    tool_name="get_external_offer_details",
+                    status="success",
+                    summary=f"verified {len(verified_external)} external offer(s)",
+                ),
+                ToolCallTrace(
+                    tool_name="response_verification",
+                    status="success",
+                    summary="verified external fallback response",
+                ),
+            ]
+            return update
+
+        update["external_offers"] = []
+        if external_issues:
+            update["errors"] = external_issues
 
     if not state.product_candidates:
         update["final_response"] = _NO_RESULTS_MESSAGE
@@ -475,6 +641,7 @@ def response_verification_node(state: RetailGraphState) -> Dict[str, Any]:
 
     update["final_response"] = final_response
     update["product_candidates"] = [candidate for candidate, _ in verified]
+    update["external_offers"] = []
     if issues:
         update["errors"] = issues
     update["tool_results"] = tool_traces + [

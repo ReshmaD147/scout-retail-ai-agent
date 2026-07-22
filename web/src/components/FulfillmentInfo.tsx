@@ -16,10 +16,9 @@ export interface FulfillmentInfoProps {
  * `substitute_for`). A pickup estimate, a configured delivery window,
  * and a restock date are all things Scout's MCP tools *can* compute
  * (scout/mcp/inventory_tools.py, Step 7) but the current workflow
- * (Step 10) does not attach any of them to `FulfillmentOption` - so
- * none are rendered here. Guessing a delivery date or pickup time the
- * backend never sent would violate "omit unsupported fields instead
- * of guessing," so an honest, fixed sentence is shown instead.
+ * Step 16.5 now attaches a configured delivery window when the
+ * store-network delivery path is used. It is shown explicitly as a
+ * prototype estimate, never as a carrier-confirmed arrival date.
  */
 export function FulfillmentInfo({ options }: FulfillmentInfoProps): JSX.Element {
   if (options.length === 0) {
@@ -52,6 +51,14 @@ function describeOption(option: FulfillmentOption): string {
     return inStock
       ? `Available at a nearby store, ${option.store_name ?? "a nearby Scout store"}${distance} (${quantity} in stock).`
       : `Checked a nearby store (${option.store_name ?? "unnamed"}) - not currently in stock.`;
+  }
+
+  if (option.channel === "delivery") {
+    const window =
+      option.delivery_min_days !== null && option.delivery_max_days !== null
+        ? ` Standard prototype delivery is estimated at ${option.delivery_min_days}-${option.delivery_max_days} days.`
+        : "";
+    return `Available across the Scout store network (${quantity} in stock).${window}`;
   }
 
   if (option.channel === "substitute") {

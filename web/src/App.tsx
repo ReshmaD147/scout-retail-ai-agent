@@ -4,6 +4,7 @@ import { CartButton } from "./components/CartButton";
 import { CartDrawer } from "./components/CartDrawer";
 import { EmptyState } from "./components/EmptyState";
 import { ErrorState } from "./components/ErrorState";
+import { ExternalOfferGrid } from "./components/ExternalOfferGrid";
 import { Header } from "./components/Header";
 import { LoadingState } from "./components/LoadingState";
 import { ProductGrid } from "./components/ProductGrid";
@@ -102,6 +103,7 @@ export function App(): JSX.Element {
               activities={activities}
               response={response}
               usedFallback={usedFallback}
+              sessionId={sessionId}
               onAddToCart={handleAddToCart}
             />
           )}
@@ -132,13 +134,14 @@ interface ResultViewProps {
   activities: ReturnType<typeof useScoutChat>["activities"];
   response: NonNullable<ReturnType<typeof useScoutChat>["response"]>;
   usedFallback: boolean;
+  sessionId: string;
   onAddToCart: (productId: string) => void;
 }
 
 /** Renders whichever of the five verified `ChatResponse.status`
  * outcomes the backend actually returned - each one is a normal,
  * successfully-handled business result, not an error. */
-function ResultView({ activities, response, usedFallback, onAddToCart }: ResultViewProps): JSX.Element {
+function ResultView({ activities, response, usedFallback, sessionId, onAddToCart }: ResultViewProps): JSX.Element {
   return (
     <div className="result-view">
       <AgentActivity activities={activities} />
@@ -175,10 +178,17 @@ function ResultView({ activities, response, usedFallback, onAddToCart }: ResultV
             <h2>Scout&apos;s answer</h2>
             <p>{response.answer}</p>
           </div>
-          <ProductGrid
-            products={response.products}
-            fulfillmentOptions={response.fulfillment_options}
-            onAddToCart={onAddToCart}
+          {response.products.length > 0 && (
+            <ProductGrid
+              products={response.products}
+              fulfillmentOptions={response.fulfillment_options}
+              onAddToCart={onAddToCart}
+            />
+          )}
+          <ExternalOfferGrid
+            offers={response.external_offers}
+            sessionId={sessionId}
+            workflowId={response.workflow_id}
           />
         </>
       )}

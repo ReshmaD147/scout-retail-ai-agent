@@ -21,7 +21,7 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from scout.mcp.schemas import ProductSummary
+from scout.mcp.schemas import ExternalOfferSummary, ProductSummary
 
 _MAX_MESSAGE_LENGTH = 2000
 """A reasonable ceiling for one chat message - generous for a real
@@ -110,6 +110,8 @@ class FulfillmentOption(BaseModel):
     substitute_for: Optional[str] = None
     """Set only when channel == "substitute" - the original product_id
     this option stands in for."""
+    delivery_min_days: Optional[int] = None
+    delivery_max_days: Optional[int] = None
 
 
 class ChatResponse(BaseModel):
@@ -129,6 +131,8 @@ class ChatResponse(BaseModel):
     happen once workflow_status is terminal/paused)."""
     products: List[ProductSummary] = Field(default_factory=list)
     fulfillment_options: List[FulfillmentOption] = Field(default_factory=list)
+    external_offers: List[ExternalOfferSummary] = Field(default_factory=list)
+    """Mock merchant alternatives returned only when no internal option is fulfillable."""
     activity_events: List[str] = Field(default_factory=list)
     """A fixed vocabulary of customer-safe phrases describing what
     Scout did (e.g. "Searching the product catalog") - never a tool's

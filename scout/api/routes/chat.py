@@ -110,6 +110,7 @@ def build_initial_state(request: ChatRequest, workflow_id: str) -> Dict[str, Any
         "active_agent": None,
         "next_agent": None,
         "product_candidates": [],
+        "external_offers": [],
         "inventory_results": [],
         "order_context": None,
         "policy_results": [],
@@ -148,7 +149,7 @@ def _map_workflow_status(state: RetailGraphState) -> str:
     if state.workflow_status in ("failed", "stopped_at_limit"):
         return "failed"
     if state.workflow_status == "completed":
-        return "completed" if state.product_candidates else "no_results"
+        return "completed" if (state.product_candidates or state.external_offers) else "no_results"
     # "in_progress" should never reach here - the graph always resolves
     # to a terminal or paused status. Treated as a safe failure rather
     # than ever silently claiming success on an unfinished workflow.
@@ -172,6 +173,8 @@ def _build_fulfillment_options(state: RetailGraphState) -> List[FulfillmentOptio
                 sellable_quantity=entry.get("sellable_quantity", 0),
                 distance_miles=entry.get("distance_miles"),
                 substitute_for=entry.get("substitute_for"),
+                delivery_min_days=entry.get("delivery_min_days"),
+                delivery_max_days=entry.get("delivery_max_days"),
             )
         )
     return options
@@ -193,6 +196,7 @@ def build_chat_response(state: RetailGraphState, workflow_id: str) -> ChatRespon
         answer=state.final_response,
         products=list(state.product_candidates),
         fulfillment_options=_build_fulfillment_options(state),
+        external_offers=list(state.external_offers),
         activity_events=_build_activity_events(state),
         errors=_build_chat_errors(state),
     )

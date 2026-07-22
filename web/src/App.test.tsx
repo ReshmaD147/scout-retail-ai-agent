@@ -140,8 +140,11 @@ const completedResponse: ChatResponse = {
       sellable_quantity: 7,
       distance_miles: 4.28,
       substitute_for: null,
+      delivery_min_days: null,
+      delivery_max_days: null,
     },
   ],
+  external_offers: [],
   activity_events: [],
   errors: [],
 };
@@ -401,6 +404,51 @@ describe("Scout shopping interface", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     await screen.findByText("ComfortPro Shift Support");
+  });
+
+  it("renders external fallback offers without Scout add-to-cart actions", async () => {
+    const user = userEvent.setup();
+    const externalResponse: ChatResponse = {
+      ...completedResponse,
+      answer: "Scout could not find a fulfillable internal option. Here are similar external alternatives.",
+      products: [],
+      fulfillment_options: [],
+      external_offers: [
+        {
+          offer_id: "EXT-OFF-001",
+          merchant_name: "Northstar Marketplace Demo",
+          external_product_id: "NS-WORK-101",
+          product_name: "ShiftEase All-Day Work Shoe",
+          brand: "ShiftEase",
+          category: "Footwear",
+          description: "Supportive work shoe for long shifts.",
+          price: 79.99,
+          currency: "USD",
+          rating: 4.6,
+          review_count: 318,
+          availability_status: "in_stock",
+          image_url: null,
+          match_type: "similar",
+          match_label: "Similar external alternative",
+          match_reason: "Matches comfort and standing needs.",
+          source_product_id: null,
+          matched_identifier_type: null,
+          relevance_score: 0.8,
+          disclosure: "Demo external offer. External checkout is handled by the retailer.",
+        },
+      ],
+    };
+    fetchMock.mockResolvedValueOnce(
+      makeStreamResponse([finalResponseFrame(1, externalResponse), streamClosedFrame(2)])
+    );
+
+    render(<App />);
+    await user.type(screen.getByLabelText(/what are you looking for/i), ACCEPTANCE_QUERY);
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(await screen.findByText("ShiftEase All-Day Work Shoe")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View at retailer" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Add to cart" })).not.toBeInTheDocument();
   });
 
   it("exposes accessibility labels and live regions (scenario 19)", async () => {

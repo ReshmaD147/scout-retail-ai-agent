@@ -121,7 +121,7 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
-from scout.mcp.schemas import ProductSummary
+from scout.mcp.schemas import ExternalOfferSummary, ProductSummary
 
 # ---------------------------------------------------------------------------
 # Sub-models
@@ -318,6 +318,11 @@ class RetailGraphState(BaseModel):
     instead of an untyped dict, since that type already exists.
     Replaced (not appended) each time the agent filters or re-ranks -
     an old, invalidated candidate must not linger."""
+    external_offers: List[ExternalOfferSummary] = Field(default_factory=list)
+    """Verified mock merchant offers returned only when every internal
+    fulfillment channel has been exhausted. Replaced wholesale on each
+    external fallback attempt; never mixed into product_candidates or cart.
+    """
     inventory_results: List[Dict[str, Any]] = Field(default_factory=list)
     """Structured results from inventory/fulfillment tool calls so far
     this workflow (see scout/mcp/inventory_tools.py *Result schemas).

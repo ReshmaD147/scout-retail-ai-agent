@@ -31,7 +31,10 @@ TOOL_LABELS: Dict[str, str] = {
     "availability_evaluation": "Comparing fulfillment options",
     "find_nearby_inventory": "Searching nearby stores",
     "check_network_inventory": "Checking network availability",
+    "get_delivery_estimate": "Estimating delivery options",
     "find_available_substitutes": "Finding available substitutes",
+    "search_external_offers": "Searching external retailers",
+    "get_external_offer_details": "Verifying external retailer offers",
     "get_product_details": "Verifying product details",
     "response_verification": "Verifying product details",
 }

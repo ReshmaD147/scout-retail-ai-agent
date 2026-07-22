@@ -55,6 +55,7 @@ function isChatResponse(value: unknown): value is ChatResponse {
     typeof candidate.status === "string" &&
     Array.isArray(candidate.products) &&
     Array.isArray(candidate.fulfillment_options) &&
+    Array.isArray(candidate.external_offers) &&
     Array.isArray(candidate.activity_events) &&
     Array.isArray(candidate.errors)
   );

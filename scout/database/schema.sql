@@ -287,3 +287,56 @@ CREATE INDEX IF NOT EXISTS idx_inventory_reservations_order
     ON inventory_reservations (order_id);
 CREATE INDEX IF NOT EXISTS idx_inventory_reservations_inventory
     ON inventory_reservations (product_id, store_id);
+
+-- Step 16.5: mock external merchant offers and affiliate click tracking.
+--
+-- External offers are deliberately separate from Scout products. They are
+-- never added to Scout carts, never used by Scout checkout, and never treated
+-- as Scout inventory. They represent a mock merchant feed that is consulted
+-- only after every internal fulfillment path has failed.
+CREATE TABLE IF NOT EXISTS external_offers (
+    offer_id             TEXT PRIMARY KEY,
+    merchant_name        TEXT NOT NULL,
+    external_product_id  TEXT NOT NULL,
+    product_name         TEXT NOT NULL,
+    brand                TEXT NOT NULL,
+    category             TEXT NOT NULL CHECK (category IN ('Footwear', 'Bags', 'Electronics', 'Home and Kitchen')),
+    description          TEXT NOT NULL,
+    price                REAL NOT NULL CHECK (price >= 0),
+    currency             TEXT NOT NULL DEFAULT 'USD',
+    rating               REAL CHECK (rating IS NULL OR (rating >= 0 AND rating <= 5)),
+    review_count         INTEGER NOT NULL DEFAULT 0 CHECK (review_count >= 0),
+    availability_status  TEXT NOT NULL CHECK (availability_status IN ('in_stock', 'out_of_stock')),
+    attributes_json      TEXT NOT NULL DEFAULT '{}',
+    image_url            TEXT,
+    merchant_url         TEXT NOT NULL,
+    upc                  TEXT,
+    gtin                 TEXT,
+    model_number         TEXT,
+    active               INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL,
+    UNIQUE (merchant_name, external_product_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_external_offers_category
+    ON external_offers (category, active, availability_status);
+
+-- A click record is analytics/audit data only. It never creates an order,
+-- changes inventory, or proves a purchase happened. match_type is persisted so
+-- the demo can audit whether the customer clicked a clearly labelled exact or
+-- similar external result.
+CREATE TABLE IF NOT EXISTS affiliate_clicks (
+    click_id           TEXT PRIMARY KEY,
+    offer_id           TEXT NOT NULL REFERENCES external_offers (offer_id),
+    session_id         TEXT NOT NULL,
+    workflow_id        TEXT,
+    source_product_id  TEXT REFERENCES products (product_id),
+    match_type         TEXT NOT NULL CHECK (match_type IN ('exact', 'similar')),
+    clicked_at         TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_offer
+    ON affiliate_clicks (offer_id, clicked_at);
+CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_session
+    ON affiliate_clicks (session_id, clicked_at);

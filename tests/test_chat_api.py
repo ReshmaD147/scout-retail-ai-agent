@@ -51,6 +51,7 @@ import pytest
 
 from scout.api.dependencies import get_compiled_graph
 from scout.config import get_settings
+from scout.database.connection import connection_scope
 
 ACCEPTANCE_QUERY = "Find comfortable work shoes under $100 that I can pick up today near Maple Grove."
 
@@ -155,6 +156,28 @@ def test_pickup_request_returns_grounded_fulfillment_info(client):
     assert nearby["sellable_quantity"] > 0
     assert nearby["distance_miles"] is not None
 
+
+
+
+def test_internal_inventory_exhaustion_returns_external_offers(client):
+    with connection_scope() as connection:
+        connection.execute(
+            "UPDATE inventory SET quantity_available = 0, quantity_reserved = 0"
+        )
+
+    response = client.post(
+        "/chat",
+        json={"session_id": "s-external", "message": ACCEPTANCE_QUERY},
+    )
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["status"] == "completed"
+    assert body["products"] == []
+    assert body["fulfillment_options"] == []
+    assert body["external_offers"]
+    assert all(offer["match_type"] == "similar" for offer in body["external_offers"])
+    assert all("merchant_url" not in offer for offer in body["external_offers"])
 
 # ---------------------------------------------------------------------------
 # 7-8: normal business outcomes that are not a completed recommendation

@@ -617,6 +617,65 @@ New Step 16 modules include:
 - `scout/mcp/checkout_tools.py`
 - `web/src/components/CheckoutPanel.tsx`
 
+
+## External merchant and affiliate fallback (Step 16.5)
+
+Step 16.5 adds a bounded recovery path when Scout cannot fulfill a request
+from its own catalog. It does not replace internal recommendations and does not
+run while a verified internal product is still available.
+
+```text
+Selected store
+→ nearby stores
+→ store-network delivery
+→ internal substitutes
+→ external merchant fallback only when no internal candidate survives
+```
+
+The external feed is **synthetic demo data only**. Mock retailers and outbound
+URLs are fictional and use `example.com`; no Amazon, Walmart, or other real
+merchant integration is included. External records stay separate from Scout
+products, carts, checkout, orders, payments, and inventory.
+
+Customer-facing rules:
+
+- External cards say **View at retailer**, never **Add to cart**.
+- Similar offers are labelled **Similar external alternative**.
+- **Exact external match** is allowed only inside the trusted matching service
+  when authoritative UPC, GTIN, or model data matches. The current synthetic
+  Scout catalog has no authoritative identifiers, so the live API/MCP/graph
+  path returns similar alternatives only.
+- The UI states that the item is not sold by Scout and displays an affiliate
+  disclosure.
+- Ranking uses request relevance, lower price, rating, and a stable ID
+  tie-breaker. No commission field exists and commission is never a ranking
+  signal.
+
+The browser opens an audited Scout redirect rather than receiving a merchant
+URL directly:
+
+```text
+GET /affiliate/click/{offer_id}?session_id=...&match_type=similar
+→ validate current offer
+→ record affiliate_clicks row
+→ 307 redirect to the synthetic merchant URL
+```
+
+A click is analytics only. It does not prove a purchase and cannot create a
+Scout cart item, payment, or order. `MAX_EXTERNAL_OFFERS=3` bounds the fallback
+result count.
+
+New Step 16.5 modules include:
+
+- `scout/repositories/affiliate_repository.py`
+- `scout/services/external_merchant_adapter.py`
+- `scout/services/external_offer_service.py`
+- `scout/mcp/affiliate_tools.py`
+- `scout/agents/external_offer_agent.py`
+- `scout/api/routes/affiliate.py`
+- `web/src/components/ExternalOfferCard.tsx`
+- `web/src/components/ExternalOfferGrid.tsx`
+
 ## Run tests
 
 ```bash
@@ -653,9 +712,8 @@ Retail_AI_Agent/
 │   ├── mcp/
 │   │   ├── product_tools.py    # search_products, get_product_details, get_promotions,
 │   │   │                       # rank_products, find_similar_products
-│   │   ├── inventory_tools.py  # check_store_inventory, find_nearby_inventory,
-│   │   │                       # check_network_inventory, get_pickup_estimate,
-│   │   │                       # get_delivery_estimate, find_available_substitutes
+│   │   ├── inventory_tools.py  # selected, nearby, network, pickup/delivery, substitutes
+│   │   ├── affiliate_tools.py  # external search, offer verification, click tracking
 │   │   ├── summaries.py        # Shared Product -> ProductSummary mapping
 │   │   ├── store_tools.py      # find_store_by_location - resolves free-text -> real store
 │   │   ├── schemas.py          # Structured input/output models for every tool
@@ -663,8 +721,9 @@ Retail_AI_Agent/
 │   ├── agents/                  # Specialist agent nodes (Step 10; verifier is Step 11)
 │   │   ├── understand_request.py     # Extracts intent, resolves the pickup location
 │   │   ├── recommendation_agent.py   # search/rank candidates; drop-unfulfillable + rerank
-│   │   ├── inventory_agent.py        # selected-store / nearby / substitute fulfillment
-│   │   └── response_verification.py  # 8-check verifier + bounded correction loop (Step 11)
+│   │   ├── inventory_agent.py        # selected / nearby / delivery / substitute fulfillment
+│   │   ├── external_offer_agent.py   # bounded mock merchant fallback
+│   │   └── response_verification.py  # internal and external grounding verification
 │   └── orchestration/
 │       ├── state.py                 # RetailGraphState - shared LangGraph state (Step 8/11)
 │       ├── supervisor_decision.py   # SupervisorDecision - structured output schema
@@ -680,6 +739,7 @@ Retail_AI_Agent/
 
 ## Not included yet
 
-A real payment provider, the Order Agent, Customer Support Agent, refunds,
-cancellations, durable memory, and production authentication are still out of
-scope. Step 16 uses a local mock payment adapter and synthetic retail data only.
+A real payment provider, real retailer/affiliate APIs, the Order Agent, Customer
+Support Agent, refunds, cancellations, durable memory, and production
+authentication are still out of scope. Step 16 uses a local mock payment adapter;
+Step 16.5 uses synthetic external offers and fictional demo retailers only.

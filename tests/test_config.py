@@ -75,3 +75,11 @@ def test_settings_rejects_invalid_checkout_rules():
         Settings(free_shipping_threshold=-1)
     with pytest.raises(ValidationError):
         Settings(checkout_currency="usd")
+
+
+def test_settings_bounds_external_offer_limit():
+    assert Settings(max_external_offers=3).max_external_offers == 3
+    with pytest.raises(ValidationError):
+        Settings(max_external_offers=0)
+    with pytest.raises(ValidationError):
+        Settings(max_external_offers=11)

@@ -602,6 +602,206 @@ PROMOTIONS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Step 16.5 mock external merchant offers.
+#
+# Retailer names, products, prices, ratings, identifiers, and URLs below are
+# synthetic. URLs use example.com intentionally; no fake Amazon/Walmart link is
+# created and no purchase can be completed from this demo feed.
+# ---------------------------------------------------------------------------
+EXTERNAL_OFFERS = [
+    {
+        "offer_id": "EXT-OFF-001",
+        "merchant_name": "Northstar Marketplace Demo",
+        "external_product_id": "NS-WORK-101",
+        "product_name": "ShiftEase All-Day Work Shoe",
+        "brand": "ShiftEase",
+        "category": "Footwear",
+        "description": "Supportive work shoe with memory-foam cushioning, arch support, and a slip-resistant outsole for long standing shifts.",
+        "price": 79.99,
+        "currency": "USD",
+        "rating": 4.6,
+        "review_count": 318,
+        "availability_status": "in_stock",
+        "attributes": {"color": "Black", "use_case": "standing all day work shifts", "tags": ["comfortable", "memory foam", "arch support", "work shoe"]},
+        "image_url": None,
+        "merchant_url": "https://example.com/?scout_offer=EXT-OFF-001",
+        "upc": "000111222333",
+        "gtin": "0000111222333",
+        "model_number": "SE-AS101",
+        "active": 1,
+    },
+    {
+        "offer_id": "EXT-OFF-002",
+        "merchant_name": "Everyday Goods Demo",
+        "external_product_id": "EG-CLOG-220",
+        "product_name": "CloudStep Service Clog",
+        "brand": "CloudStep",
+        "category": "Footwear",
+        "description": "Lightweight service clog with a cushioned footbed for restaurant, healthcare, and retail shifts.",
+        "price": 54.99,
+        "currency": "USD",
+        "rating": 4.3,
+        "review_count": 174,
+        "availability_status": "in_stock",
+        "attributes": {"color": "Graphite", "use_case": "service work", "tags": ["clog", "comfortable", "standing", "lightweight"]},
+        "image_url": None,
+        "merchant_url": "https://example.com/?scout_offer=EXT-OFF-002",
+        "upc": "000111222334",
+        "gtin": None,
+        "model_number": "CS-SC220",
+        "active": 1,
+    },
+    {
+        "offer_id": "EXT-OFF-003",
+        "merchant_name": "Trail Supply Demo",
+        "external_product_id": "TS-BOOT-310",
+        "product_name": "TrailGuard Waterproof Hiking Boot",
+        "brand": "TrailGuard",
+        "category": "Footwear",
+        "description": "Waterproof outdoor hiking boot with ankle support and a grippy trail outsole.",
+        "price": 119.00,
+        "currency": "USD",
+        "rating": 4.5,
+        "review_count": 229,
+        "availability_status": "in_stock",
+        "attributes": {"color": "Brown", "use_case": "hiking and outdoor trails", "tags": ["hiking", "outdoor", "waterproof", "boot"]},
+        "image_url": None,
+        "merchant_url": "https://example.com/?scout_offer=EXT-OFF-003",
+        "upc": "000111222335",
+        "gtin": None,
+        "model_number": "TG-WB310",
+        "active": 1,
+    },
+    {
+        "offer_id": "EXT-OFF-004",
+        "merchant_name": "CarryWell Demo",
+        "external_product_id": "CW-COMMUTE-410",
+        "product_name": "MetroFlex Commuter Backpack",
+        "brand": "MetroFlex",
+        "category": "Bags",
+        "description": "Lightweight commuter backpack with a padded laptop sleeve, organized pockets, and water-resistant fabric.",
+        "price": 69.50,
+        "currency": "USD",
+        "rating": 4.4,
+        "review_count": 206,
+        "availability_status": "in_stock",
+        "attributes": {"color": "Navy", "use_case": "work commute and travel", "tags": ["backpack", "commute", "laptop", "lightweight"]},
+        "image_url": None,
+        "merchant_url": "https://example.com/?scout_offer=EXT-OFF-004",
+        "upc": None,
+        "gtin": "0000111222444",
+        "model_number": "MF-CB410",
+        "active": 1,
+    },
+    {
+        "offer_id": "EXT-OFF-005",
+        "merchant_name": "CarryWell Demo",
+        "external_product_id": "CW-TOTE-420",
+        "product_name": "OfficeDay Structured Tote",
+        "brand": "OfficeDay",
+        "category": "Bags",
+        "description": "Structured office tote with a zip top, laptop compartment, and reinforced shoulder straps.",
+        "price": 89.00,
+        "currency": "USD",
+        "rating": 4.2,
+        "review_count": 91,
+        "availability_status": "in_stock",
+        "attributes": {"color": "Burgundy", "use_case": "office", "tags": ["tote", "office", "laptop", "work bag"]},
+        "image_url": None,
+        "merchant_url": "https://example.com/?scout_offer=EXT-OFF-005",
+        "upc": None,
+        "gtin": None,
+        "model_number": "OD-ST420",
+        "active": 1,
+    },
+    {
+        "offer_id": "EXT-OFF-006",
+        "merchant_name": "Signal Tech Demo",
+        "external_product_id": "ST-AUDIO-510",
+        "product_name": "ClearTone Wireless Earbuds",
+        "brand": "ClearTone",
+        "category": "Electronics",
+        "description": "Compact wireless earbuds with a charging case, clear calls, and everyday listening controls.",
+        "price": 44.99,
+        "currency": "USD",
+        "rating": 4.1,
+        "review_count": 482,
+        "availability_status": "in_stock",
+        "attributes": {"color": "Ivory", "use_case": "everyday audio", "tags": ["wireless", "earbuds", "audio", "calls"]},
+        "image_url": None,
+        "merchant_url": "https://example.com/?scout_offer=EXT-OFF-006",
+        "upc": "000111222336",
+        "gtin": None,
+        "model_number": "CT-WE510",
+        "active": 1,
+    },
+    {
+        "offer_id": "EXT-OFF-007",
+        "merchant_name": "Homeworks Market Demo",
+        "external_product_id": "HM-COFFEE-610",
+        "product_name": "MorningPour Compact Coffee Maker",
+        "brand": "MorningPour",
+        "category": "Home and Kitchen",
+        "description": "Compact programmable coffee maker for small kitchens with a reusable filter and auto shutoff.",
+        "price": 39.99,
+        "currency": "USD",
+        "rating": 4.3,
+        "review_count": 144,
+        "availability_status": "in_stock",
+        "attributes": {"color": "Black", "use_case": "home coffee", "tags": ["coffee", "maker", "brew", "kitchen"]},
+        "image_url": None,
+        "merchant_url": "https://example.com/?scout_offer=EXT-OFF-007",
+        "upc": None,
+        "gtin": "0000111222777",
+        "model_number": "MP-CM610",
+        "active": 1,
+    },
+    {
+        "offer_id": "EXT-OFF-008",
+        "merchant_name": "Homeworks Market Demo",
+        "external_product_id": "HM-LAMP-620",
+        "product_name": "FocusBeam Adjustable Desk Lamp",
+        "brand": "FocusBeam",
+        "category": "Home and Kitchen",
+        "description": "Adjustable LED desk lamp with dimming levels and a compact weighted base.",
+        "price": 34.50,
+        "currency": "USD",
+        "rating": 4.5,
+        "review_count": 267,
+        "availability_status": "in_stock",
+        "attributes": {"color": "Matte Black", "use_case": "desk and study", "tags": ["lamp", "desk", "led", "adjustable"]},
+        "image_url": None,
+        "merchant_url": "https://example.com/?scout_offer=EXT-OFF-008",
+        "upc": None,
+        "gtin": None,
+        "model_number": "FB-DL620",
+        "active": 1,
+    },
+    {
+        "offer_id": "EXT-OFF-009",
+        "merchant_name": "Northstar Marketplace Demo",
+        "external_product_id": "NS-WORK-999",
+        "product_name": "Discontinued Work Shoe Demo",
+        "brand": "ShiftEase",
+        "category": "Footwear",
+        "description": "Out-of-stock row used to prove unavailable external offers are filtered.",
+        "price": 49.99,
+        "currency": "USD",
+        "rating": 4.0,
+        "review_count": 10,
+        "availability_status": "out_of_stock",
+        "attributes": {"tags": ["work shoe"]},
+        "image_url": None,
+        "merchant_url": "https://example.com/?scout_offer=EXT-OFF-009",
+        "upc": None,
+        "gtin": None,
+        "model_number": "SE-OOS999",
+        "active": 1,
+    },
+]
+
+
 def _seed_stores(connection: sqlite3.Connection) -> None:
     connection.executemany(
         """
@@ -674,6 +874,32 @@ def _seed_promotions(connection: sqlite3.Connection) -> None:
     )
 
 
+
+def _seed_external_offers(connection: sqlite3.Connection) -> None:
+    connection.executemany(
+        """
+        INSERT OR IGNORE INTO external_offers (
+            offer_id, merchant_name, external_product_id, product_name, brand,
+            category, description, price, currency, rating, review_count,
+            availability_status, attributes_json, image_url, merchant_url,
+            upc, gtin, model_number, active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                offer["offer_id"], offer["merchant_name"], offer["external_product_id"],
+                offer["product_name"], offer["brand"], offer["category"],
+                offer["description"], offer["price"], offer["currency"], offer["rating"],
+                offer["review_count"], offer["availability_status"],
+                json.dumps(offer["attributes"], separators=(",", ":")), offer["image_url"],
+                offer["merchant_url"], offer["upc"], offer["gtin"], offer["model_number"],
+                offer["active"], _SEED_TIMESTAMP, _SEED_TIMESTAMP,
+            )
+            for offer in EXTERNAL_OFFERS
+        ],
+    )
+
+
 def seed_database(db_path: Optional[str] = None) -> None:
     """Insert all synthetic demo data. Safe to call more than once.
 
@@ -686,6 +912,7 @@ def seed_database(db_path: Optional[str] = None) -> None:
         _seed_products(connection)
         _seed_inventory(connection)
         _seed_promotions(connection)
+        _seed_external_offers(connection)
 
     logger.info(
         "database_seeded",
@@ -694,6 +921,7 @@ def seed_database(db_path: Optional[str] = None) -> None:
             "products": len(PRODUCTS),
             "inventory_rows": len(INVENTORY),
             "promotions": len(PROMOTIONS),
+            "external_offers": len(EXTERNAL_OFFERS),
         },
     )
 
@@ -702,5 +930,6 @@ if __name__ == "__main__":
     seed_database()
     print(
         f"Seeded {len(STORES)} stores, {len(PRODUCTS)} products, "
-        f"{len(INVENTORY)} inventory rows, {len(PROMOTIONS)} promotions."
+        f"{len(INVENTORY)} inventory rows, {len(PROMOTIONS)} promotions, "
+        f"{len(EXTERNAL_OFFERS)} external offers."
     )

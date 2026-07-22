@@ -7,7 +7,7 @@ the development database configured by DATABASE_PATH / .env.
 
 from scout.database.connection import connection_scope
 from scout.database.initialize import initialize_database
-from scout.database.seed import INVENTORY, PRODUCTS, PROMOTIONS, STORES, seed_database
+from scout.database.seed import EXTERNAL_OFFERS, INVENTORY, PRODUCTS, PROMOTIONS, STORES, seed_database
 
 EXPECTED_TABLES = {
     "products",
@@ -21,6 +21,8 @@ EXPECTED_TABLES = {
     "orders",
     "order_items",
     "inventory_reservations",
+    "external_offers",
+    "affiliate_clicks",
 }
 EXPECTED_CATEGORIES = {"Footwear", "Bags", "Electronics", "Home and Kitchen"}
 
@@ -151,6 +153,19 @@ def test_product_with_zero_local_availability(seeded_db_path):
     assert len(rows) >= 1
 
 
+def test_seed_creates_mock_external_offers_without_real_retailer_urls(seeded_db_path):
+    assert len(EXTERNAL_OFFERS) > 0
+    with connection_scope(seeded_db_path) as connection:
+        rows = connection.execute(
+            "SELECT merchant_name, merchant_url FROM external_offers"
+        ).fetchall()
+    assert len(rows) == len(EXTERNAL_OFFERS)
+    rendered = " ".join(f"{row['merchant_name']} {row['merchant_url']}" for row in rows).lower()
+    assert "amazon" not in rendered
+    assert "walmart" not in rendered
+    assert all(row["merchant_url"].startswith("https://example.com/") for row in rows)
+
+
 def test_seeding_twice_does_not_duplicate(seeded_db_path):
     seed_database(seeded_db_path)  # run seeding again on top of itself
 
@@ -159,8 +174,10 @@ def test_seeding_twice_does_not_duplicate(seeded_db_path):
         stores = connection.execute("SELECT COUNT(*) AS c FROM stores").fetchone()["c"]
         inventory = connection.execute("SELECT COUNT(*) AS c FROM inventory").fetchone()["c"]
         promotions = connection.execute("SELECT COUNT(*) AS c FROM promotions").fetchone()["c"]
+        external_offers = connection.execute("SELECT COUNT(*) AS c FROM external_offers").fetchone()["c"]
 
     assert products == len(PRODUCTS)
     assert stores == len(STORES)
     assert inventory == len(INVENTORY)
     assert promotions == len(PROMOTIONS)
+    assert external_offers == len(EXTERNAL_OFFERS)

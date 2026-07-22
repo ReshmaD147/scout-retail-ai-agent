@@ -24,6 +24,8 @@ const fulfillmentOptions: FulfillmentOption[] = [
     sellable_quantity: 7,
     distance_miles: 4.28,
     substitute_for: null,
+    delivery_min_days: null,
+    delivery_max_days: null,
   },
 ];
 
@@ -70,6 +72,8 @@ describe("ProductCard", () => {
             sellable_quantity: 0,
             distance_miles: null,
             substitute_for: null,
+            delivery_min_days: null,
+            delivery_max_days: null,
           },
           {
             product_id: "FTW-004",
@@ -79,6 +83,8 @@ describe("ProductCard", () => {
             sellable_quantity: 7,
             distance_miles: 4.28,
             substitute_for: null,
+            delivery_min_days: null,
+            delivery_max_days: null,
           },
         ]}
       />

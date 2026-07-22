@@ -20,6 +20,7 @@ from scout.agents.inventory_agent import (
     availability_evaluation_node,
     inventory_agent_node,
     nearby_store_search_node,
+    network_delivery_search_node,
     products_needing_fulfillment,
     substitute_search_node,
 )
@@ -234,6 +235,61 @@ def test_a_database_error_is_recorded_and_the_search_continues(monkeypatch):
 
     assert update["errors"][0].error_type == "database_error"
 
+
+
+
+# ---------------------------------------------------------------------------
+# network_delivery_search_node
+# ---------------------------------------------------------------------------
+
+
+def test_network_delivery_confirms_store_network_stock_after_local_fallbacks():
+    state = _state(
+        product_candidates=[FTW_004],
+        inventory_results=[
+            {"product_id": "FTW-004", "channel": "selected_store", "sellable_quantity": 0},
+            {"product_id": "FTW-004", "channel": "nearby_store", "sellable_quantity": 0},
+        ],
+    )
+
+    update = network_delivery_search_node(state)
+
+    delivery = next(entry for entry in update["inventory_results"] if entry["channel"] == "delivery")
+    assert delivery["product_id"] == "FTW-004"
+    assert delivery["sellable_quantity"] > 0
+    assert delivery["delivery_min_days"] == 3
+    assert delivery["delivery_max_days"] == 5
+    assert any(trace.tool_name == "get_delivery_estimate" for trace in update["tool_results"])
+
+
+def test_network_delivery_skips_when_candidate_is_already_fulfilled():
+    state = _state(
+        product_candidates=[FTW_004],
+        inventory_results=[
+            {"product_id": "FTW-004", "channel": "nearby_store", "sellable_quantity": 4}
+        ],
+    )
+
+    update = network_delivery_search_node(state)
+
+    assert "inventory_results" not in update
+    assert update["tool_results"][0].summary == "no delivery search needed"
+
+
+def test_network_delivery_leaves_unavailable_product_for_substitute_search():
+    state = _state(
+        product_candidates=[FTW_010],
+        inventory_results=[
+            {"product_id": "FTW-010", "channel": "selected_store", "sellable_quantity": 0}
+        ],
+    )
+
+    update = network_delivery_search_node(state)
+
+    assert not any(
+        entry.get("channel") == "delivery" and entry.get("product_id") == "FTW-010"
+        for entry in update["inventory_results"]
+    )
 
 # ---------------------------------------------------------------------------
 # substitute_search_node

@@ -409,3 +409,52 @@ class InventoryReservationRecord(BaseModel):
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "InventoryReservationRecord":
         return cls(**dict(row))
+
+
+class ExternalOfferRecord(BaseModel):
+    """One synthetic merchant offer from Step 16.5's mock feed."""
+
+    offer_id: str
+    merchant_name: str
+    external_product_id: str
+    product_name: str
+    brand: str
+    category: str
+    description: str
+    price: float
+    currency: str
+    rating: Optional[float]
+    review_count: int
+    availability_status: str
+    attributes: Dict[str, Any]
+    image_url: Optional[str]
+    merchant_url: str
+    upc: Optional[str]
+    gtin: Optional[str]
+    model_number: Optional[str]
+    active: bool
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "ExternalOfferRecord":
+        values = dict(row)
+        values["attributes"] = json.loads(values.pop("attributes_json"))
+        values["active"] = bool(values["active"])
+        return cls(**values)
+
+
+class AffiliateClickRecord(BaseModel):
+    """One external-offer click; not an order or purchase record."""
+
+    click_id: str
+    offer_id: str
+    session_id: str
+    workflow_id: Optional[str]
+    source_product_id: Optional[str]
+    match_type: str
+    clicked_at: str
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "AffiliateClickRecord":
+        return cls(**dict(row))

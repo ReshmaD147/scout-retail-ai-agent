@@ -61,10 +61,12 @@ from typing import Any, Dict, Optional
 
 from langgraph.graph import END, START, StateGraph
 
+from scout.agents.external_offer_agent import external_offer_fallback_node
 from scout.agents.inventory_agent import (
     availability_evaluation_node,
     inventory_agent_node,
     nearby_store_search_node,
+    network_delivery_search_node,
     products_needing_fulfillment,
     substitute_search_node,
 )
@@ -94,8 +96,18 @@ def route_after_availability(state: RetailGraphState) -> str:
 
 
 def route_after_nearby(state: RetailGraphState) -> str:
-    """Skip substitute search when nearby stores already resolved everything."""
+    """Check network delivery only for products still unfulfilled nearby."""
+    return "network_delivery_search" if products_needing_fulfillment(state) else "reranking"
+
+
+def route_after_network_delivery(state: RetailGraphState) -> str:
+    """Search internal substitutes only when delivery is also unavailable."""
     return "substitute_search" if products_needing_fulfillment(state) else "reranking"
+
+
+def route_after_reranking(state: RetailGraphState) -> str:
+    """External fallback is reachable only when no internal candidate survived."""
+    return "external_offer_fallback" if not state.product_candidates else "response_verification"
 
 
 def route_after_verification(state: RetailGraphState) -> str:
@@ -133,8 +145,10 @@ def build_retail_graph(policy: Optional[SupervisorPolicy] = None):
     graph.add_node("inventory_agent", inventory_agent_node)
     graph.add_node("availability_evaluation", availability_evaluation_node)
     graph.add_node("nearby_store_search", nearby_store_search_node)
+    graph.add_node("network_delivery_search", network_delivery_search_node)
     graph.add_node("substitute_search", substitute_search_node)
     graph.add_node("reranking", rerank_node)
+    graph.add_node("external_offer_fallback", external_offer_fallback_node)
     graph.add_node("response_verification", response_verification_node)
 
     graph.add_edge(START, "understand_request")
@@ -150,10 +164,23 @@ def build_retail_graph(policy: Optional[SupervisorPolicy] = None):
     graph.add_conditional_edges(
         "nearby_store_search",
         route_after_nearby,
+        {"network_delivery_search": "network_delivery_search", "reranking": "reranking"},
+    )
+    graph.add_conditional_edges(
+        "network_delivery_search",
+        route_after_network_delivery,
         {"substitute_search": "substitute_search", "reranking": "reranking"},
     )
     graph.add_edge("substitute_search", "reranking")
-    graph.add_edge("reranking", "response_verification")
+    graph.add_conditional_edges(
+        "reranking",
+        route_after_reranking,
+        {
+            "external_offer_fallback": "external_offer_fallback",
+            "response_verification": "response_verification",
+        },
+    )
+    graph.add_edge("external_offer_fallback", "response_verification")
     graph.add_conditional_edges(
         "response_verification",
         route_after_verification,
