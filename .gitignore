@@ -1,0 +1,30 @@
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# SQLite/runtime data
+data/*.db
+*.sqlite
+*.sqlite3
+
+# React
+web/node_modules/
+web/dist/
+node_modules/
+dist/
+
+# IDE and macOS
+.vscode/
+.DS_Store
+
+# Logs and archives
+*.log
+*.zip
