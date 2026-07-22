@@ -1,0 +1,95 @@
+"""Tests for promotion_service."""
+
+from datetime import date
+
+from scout.services.promotion_service import calculate_price
+from tests.factories import make_product, make_promotion
+
+
+def test_expired_promotion_does_not_apply():
+    product = make_product(product_id="P1", price=100.0)
+    expired = make_promotion(
+        product_id="P1", start_date="2026-01-01", end_date="2026-02-01", discount_percent=20.0
+    )
+
+    result = calculate_price(product, [expired], as_of=date(2026, 7, 21))
+
+    assert result.final_price == 100.0
+    assert result.applied_promotion_id is None
+
+
+def test_future_promotion_does_not_apply():
+    product = make_product(product_id="P1", price=100.0)
+    future = make_promotion(
+        product_id="P1", start_date="2026-09-01", end_date="2026-09-30", discount_percent=20.0
+    )
+
+    result = calculate_price(product, [future], as_of=date(2026, 7, 21))
+
+    assert result.final_price == 100.0
+    assert result.applied_promotion_id is None
+
+
+def test_manually_disabled_promotion_does_not_apply_even_during_valid_dates():
+    product = make_product(product_id="P1", price=100.0)
+    disabled = make_promotion(
+        product_id="P1",
+        start_date="2026-07-01",
+        end_date="2026-07-31",
+        active=False,
+        discount_percent=20.0,
+    )
+
+    result = calculate_price(product, [disabled], as_of=date(2026, 7, 21))
+
+    assert result.final_price == 100.0
+
+
+def test_active_current_promotion_applies_percent_discount():
+    product = make_product(product_id="P1", price=100.0)
+    promo = make_promotion(
+        product_id="P1", start_date="2026-07-01", end_date="2026-07-31", discount_percent=15.0
+    )
+
+    result = calculate_price(product, [promo], as_of=date(2026, 7, 21))
+
+    assert result.final_price == 85.0
+    assert result.applied_promotion_id == promo.promotion_id
+
+
+def test_amount_discount_never_goes_below_zero():
+    product = make_product(product_id="P1", price=5.0)
+    promo = make_promotion(
+        product_id="P1",
+        discount_amount=50.0,
+        discount_percent=None,
+        start_date="2026-07-01",
+        end_date="2026-07-31",
+    )
+
+    result = calculate_price(product, [promo], as_of=date(2026, 7, 21))
+
+    assert result.final_price == 0.0
+
+
+def test_best_of_multiple_valid_promotions_is_chosen():
+    product = make_product(product_id="P1", price=100.0)
+    small = make_promotion(
+        promotion_id="PRM-A",
+        product_id="P1",
+        discount_percent=10.0,
+        start_date="2026-07-01",
+        end_date="2026-07-31",
+    )
+    big = make_promotion(
+        promotion_id="PRM-B",
+        product_id="P1",
+        discount_percent=25.0,
+        start_date="2026-07-01",
+        end_date="2026-07-31",
+    )
+
+    result = calculate_price(product, [small, big], as_of=date(2026, 7, 21))
+
+    assert result.final_price == 75.0
+    assert result.applied_promotion_id == "PRM-B"
