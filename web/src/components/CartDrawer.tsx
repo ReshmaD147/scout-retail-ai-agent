@@ -138,7 +138,10 @@ function CartItemRow({ item, onUpdateQuantity, onRemove }: CartItemRowProps): JS
     <li className="cart-item">
       <div className="cart-item__info">
         <p className="cart-item__name">{item.product_name}</p>
-        <p className="cart-item__price">${item.unit_price.toFixed(2)} each</p>
+        <p className="cart-item__price">
+          ${item.unit_price.toFixed(2)} each
+          {item.promotion_label && <span className="cart-item__promotion">{item.promotion_label}</span>}
+        </p>
         {item.warnings.map((warning, index) => (
           <p key={index} className="cart-item__warning">
             {warning}

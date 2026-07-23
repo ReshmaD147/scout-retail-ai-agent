@@ -13,6 +13,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from scout.orchestration.state import RetailGraphState
 
+
 SUPERVISOR_SYSTEM_PROMPT = """\
 You are the Supervisor for Scout, a bounded-autonomous retail assistant.
 You do not answer the customer directly and you do not call tools
@@ -58,9 +59,21 @@ Rules:
    or replanning; leave it empty to continue the existing plan.
 7. Set `needs_multiple_agents` to true if the plan involves more than
    one specialist agent.
+8. This graph currently calls you exactly once per request, immediately
+   after intent extraction. Choosing "recommendation" automatically
+   triggers inventory checks, fallback search, and response
+   verification afterward, in sequence, with no further decision from
+   you needed - those steps are not separate turns you route to
+   yourself. Choosing "inventory", "support", or "verification"
+   directly currently ends the workflow with no answer, because this
+   graph does not yet call you again mid-pipeline to hand off to them.
+   For any request about finding, comparing, or checking stock on a
+   product, choose "recommendation" - not "inventory" - even if the
+   customer's wording emphasizes availability or pickup. Choose "order"
+   only for questions about an existing order's status, tracking, or
+   eligibility.
 """
-
-
+   
 def format_state_summary(state: RetailGraphState) -> str:
     """Render the safe, relevant parts of `state` as plain text.
 

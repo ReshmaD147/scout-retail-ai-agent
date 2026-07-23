@@ -4,6 +4,15 @@ import { CartIcon, HeartIcon } from "./Icons";
 import { FulfillmentInfo } from "./FulfillmentInfo";
 
 export const PRODUCT_IMAGE_PLACEHOLDER = "/images/products/placeholder.svg";
+const PRODUCT_IMAGE_EXTENSIONS = ["webp", "png", "jpg"] as const;
+
+/** Tries each supported extension in order before falling back to the
+ * shared placeholder - lets product images be dropped in as .webp,
+ * .png, or .jpg without any filename lookup or manifest. */
+export function getProductImageSrc(productId: string, attemptIndex: number): string {
+  if (attemptIndex >= PRODUCT_IMAGE_EXTENSIONS.length) return PRODUCT_IMAGE_PLACEHOLDER;
+  return `/images/products/${productId}.${PRODUCT_IMAGE_EXTENSIONS[attemptIndex]}`;
+}
 
 export interface ProductCardProps {
   product: ProductSummary;
@@ -14,11 +23,12 @@ export interface ProductCardProps {
 }
 
 export function ProductCard({ product, fulfillmentOptions, resultPosition, onAddToCart }: ProductCardProps): JSX.Element {
-  const [imageSrc, setImageSrc] = useState(`/images/products/${product.product_id}.webp`);
+  const [imageAttempt, setImageAttempt] = useState(0);
+  const imageSrc = getProductImageSrc(product.product_id, imageAttempt);
   const rankLabel = resultPosition === 1 ? "Best match" : resultPosition ? "Strong option" : null;
 
   const handleImageError = (): void => {
-    if (imageSrc !== PRODUCT_IMAGE_PLACEHOLDER) setImageSrc(PRODUCT_IMAGE_PLACEHOLDER);
+    setImageAttempt((current) => current + 1);
   };
 
   return (

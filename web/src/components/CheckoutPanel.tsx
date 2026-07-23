@@ -59,16 +59,21 @@ export function CheckoutPanel({ cart, checkout }: CheckoutPanelProps): JSX.Eleme
         <ul className="checkout-review__items">
           {checkout.review.items.map((item) => (
             <li key={item.product_id}>
-              <span>{item.product_name} × {item.quantity}</span>
+              <div className="checkout-review__item-info">
+                <span>{item.product_name} × {item.quantity}</span>
+                {item.promotion_label && (
+                  <span className="checkout-review__promotion">{item.promotion_label}</span>
+                )}
+              </div>
               <span>${item.line_total.toFixed(2)}</span>
             </li>
           ))}
         </ul>
 
         <dl className="checkout-summary">
-          <div><dt>Subtotal</dt><dd>${checkout.review.subtotal.toFixed(2)}</dd></div>
+          <div><dt>Price before discount</dt><dd>${checkout.review.subtotal.toFixed(2)}</dd></div>
           <div><dt>Discount</dt><dd>−${checkout.review.discount_total.toFixed(2)}</dd></div>
-          <div><dt>Merchandise</dt><dd>${checkout.review.merchandise_total.toFixed(2)}</dd></div>
+          <div><dt>Merchandise total</dt><dd>${checkout.review.merchandise_total.toFixed(2)}</dd></div>
           <div><dt>Tax</dt><dd>${checkout.review.tax_total.toFixed(2)}</dd></div>
           <div><dt>Shipping</dt><dd>${checkout.review.shipping_total.toFixed(2)}</dd></div>
           <div className="checkout-summary__total"><dt>Total</dt><dd>${checkout.review.total.toFixed(2)}</dd></div>

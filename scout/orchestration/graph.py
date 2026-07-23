@@ -52,6 +52,7 @@ function safe: a policy cannot send this graph to a node that has not
 been implemented yet.
 """
 
+from email import policy
 from typing import Any, Dict, Optional
 
 from langgraph.graph import END, START, StateGraph
@@ -71,10 +72,9 @@ from scout.agents.response_verification import response_verification_node
 from scout.agents.understand_request import understand_request_node
 from scout.config import get_settings
 from scout.orchestration.routing import route_from_supervisor
-from scout.orchestration.rule_based_policy import RuleBasedSupervisorPolicy
 from scout.orchestration.state import RetailGraphState
 from scout.orchestration.supervisor import supervisor_node
-from scout.orchestration.supervisor_policy import SupervisorPolicy
+from scout.orchestration.supervisor_policy import SupervisorPolicy, get_supervisor_policy
 
 _SUPERVISOR_ROUTES = {
     "recommendation_agent": "recommendation_agent",
@@ -121,18 +121,22 @@ def build_retail_graph(policy: Optional[SupervisorPolicy] = None):
     """Build and compile Scout's first complete retail workflow graph.
 
     Args:
-        policy: The Supervisor's decision-maker. Defaults to
-            `RuleBasedSupervisorPolicy` (scout/orchestration/rule_based_policy.py)
-            since no LLM is wired in yet; pass a `LangChainSupervisorPolicy`
-            (scout/orchestration/supervisor_policy.py) once one is.
+        policy: The Supervisor's decision-maker. Defaults to whatever
+            `get_supervisor_policy()` (scout/orchestration/supervisor_policy.py)
+            selects from centralized configuration - `RuleBasedSupervisorPolicy`
+            unless `SUPERVISOR_POLICY=ollama` is set, in which case a real
+            local Ollama chat model decides Supervisor routing at runtime,
+            falling back to rule-based routing automatically if that model
+            is ever unreachable. Pass an explicit policy (as every existing
+            test does) to bypass configuration entirely.
 
     Returns:
         A compiled LangGraph graph. Call `.invoke(...)` directly, or use
         `run_graph()` below for a result already re-validated into a
         RetailGraphState instance.
     """
-    active_policy = policy or RuleBasedSupervisorPolicy()
-
+    active_policy = policy or get_supervisor_policy()
+   
     graph = StateGraph(RetailGraphState)
 
     graph.add_node("understand_request", understand_request_node)

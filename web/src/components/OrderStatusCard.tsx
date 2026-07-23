@@ -10,7 +10,7 @@ import {
   PackageIcon,
   StoreIcon,
 } from "./Icons";
-import { PRODUCT_IMAGE_PLACEHOLDER } from "./ProductCard";
+import { PRODUCT_IMAGE_PLACEHOLDER, getProductImageSrc } from "./ProductCard";
 
 export interface OrderStatusCardProps {
   order: OrderStatusView;
@@ -115,16 +115,15 @@ function EligibilityRow({ label, eligible, reason }: { label: string; eligible: 
 }
 
 function OrderItemRow({ item, currency }: { item: OrderItemStatus; currency: string }): JSX.Element {
-  const [imageSource, setImageSource] = useState(`/images/products/${item.product_id}.webp`);
+  const [imageAttempt, setImageAttempt] = useState(0);
+  const imageSource = getProductImageSrc(item.product_id, imageAttempt);
 
   return (
     <li className="order-item-row">
       <div className="order-item-row__image-wrap">
         <img
           src={imageSource}
-          onError={() => {
-            if (imageSource !== PRODUCT_IMAGE_PLACEHOLDER) setImageSource(PRODUCT_IMAGE_PLACEHOLDER);
-          }}
+          onError={() => setImageAttempt((current) => current + 1)}
           alt={`${item.product_name} product photo`}
           className="order-item-row__image"
           width={92}

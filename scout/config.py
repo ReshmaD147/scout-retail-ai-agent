@@ -131,6 +131,28 @@ class Settings(BaseSettings):
     `semantic_search_candidate_limit` products are available, without
     requiring a high, hard-to-calibrate score from the deterministic
     default embedding."""
+    supervisor_policy: Literal["rule_based", "ollama"] = "rule_based"
+    """Which SupervisorPolicy scout/orchestration/graph.py wires into the
+    compiled workflow (scout/orchestration/supervisor.py, Step 9-10).
+    "rule_based" (default) is the fully deterministic
+    RuleBasedSupervisorPolicy every existing test and the current demo
+    path depends on - it never calls a model. "ollama" switches to
+    LangChainSupervisorPolicy (scout/orchestration/supervisor_policy.py)
+    bound to a real local chat model served by Ollama (CLAUDE.md section
+    2's approved local LLM runtime) at `ollama_base_url`, using
+    `ollama_chat_model` - the Supervisor's routing decision
+    (recommendation, inventory, order, clarification, finish,
+    safe_failure, ...) is then made by that model at runtime instead of
+    a fixed if/else tree. Mirrors `embedding_provider`'s existing
+    hashing/ollama pattern exactly, including the same fail-safe spirit:
+    a deterministic default that needs nothing installed, and a genuine
+    local-model alternative behind the same interface for when one is
+    available."""
+    ollama_chat_model: str = "llama3.2"
+    """Which locally-served Ollama chat model
+    scout/orchestration/supervisor_policy.py's LangChainSupervisorPolicy
+    binds to when supervisor_policy="ollama". Ignored entirely when
+    supervisor_policy="rule_based" (the default)."""
     max_recommended_products: int = Field(default=3, ge=1)
     """Hard ceiling on how many verified products
     scout/agents/recommendation_agent.py's rerank_node ever hands to the

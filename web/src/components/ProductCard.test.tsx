@@ -46,15 +46,19 @@ describe("ProductCard", () => {
     expect(screen.queryByText(/reviews\)/)).not.toBeInTheDocument();
   });
 
-  it("falls back to the placeholder image when the product image fails to load (scenario 9)", () => {
+  it("tries webp, then png, then jpg before falling back to the placeholder (scenario 9)", () => {
     render(<ProductCard product={product} fulfillmentOptions={fulfillmentOptions} />);
     const image = screen.getByAltText("ComfortPro Shift Support product photo") as HTMLImageElement;
 
     expect(image.src).toContain(`/images/products/${product.product_id}.webp`);
     fireEvent.error(image);
+    expect(image.src).toContain(`/images/products/${product.product_id}.png`);
+    fireEvent.error(image);
+    expect(image.src).toContain(`/images/products/${product.product_id}.jpg`);
+    fireEvent.error(image);
     expect(image.src).toContain(PRODUCT_IMAGE_PLACEHOLDER);
 
-    // A second error (e.g. the placeholder itself failing) must not loop.
+    // A further error (e.g. the placeholder itself failing) must not loop.
     fireEvent.error(image);
     expect(image.src).toContain(PRODUCT_IMAGE_PLACEHOLDER);
   });
