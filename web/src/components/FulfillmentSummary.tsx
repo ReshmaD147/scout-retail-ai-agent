@@ -23,7 +23,13 @@ export function FulfillmentSummary({ options, stores, requestedLocation }: Fulfi
     <section className="fulfillment-summary" aria-labelledby="fulfillment-summary-title">
       <h2 id="fulfillment-summary-title">Fulfillment summary</h2>
 
-      <FulfillmentMap options={pickupOptions} stores={stores} requestedLocation={requestedLocation} />
+      {pickupOptions.length > 0 ? (
+        <FulfillmentMap options={pickupOptions} stores={stores} requestedLocation={requestedLocation} />
+      ) : (
+        <div className="fulfillment-map-placeholder" role="status">
+          Search for a product to view verified pickup and delivery options.
+        </div>
+      )}
 
       {options.length === 0 ? (
         <p className="fulfillment-summary__empty">Search for a product to see verified store and delivery options.</p>

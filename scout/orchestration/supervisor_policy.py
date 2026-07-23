@@ -32,7 +32,17 @@ from scout.orchestration.supervisor_prompt import build_supervisor_prompt, forma
 logger = logging.getLogger(__name__)
 
 _REACHABLE_DECISIONS = frozenset(
-    {"recommendation", "order", "clarification", "confirmation", "finish", "safe_failure"}
+    {
+        "recommendation",
+        "inventory",
+        "order",
+        "support",
+        "verification",
+        "clarification",
+        "confirmation",
+        "finish",
+        "safe_failure",
+    }
 )
 """Decisions that actually lead somewhere in this graph's current shape
 (scout/orchestration/graph.py's _SUPERVISOR_ROUTES / routing.py's
@@ -93,26 +103,74 @@ class OllamaBackedSupervisorPolicy:
     def __init__(self, chat_model: StructuredChatModel):
         self._llm_policy = LangChainSupervisorPolicy(chat_model)
         self._fallback_policy = RuleBasedSupervisorPolicy()
+        self.last_decision_source = "rule_based_fallback"
+
+    def _guard_stale_decision(
+        self, state: RetailGraphState, decision: SupervisorDecision
+    ) -> SupervisorDecision:
+        """Refuse model decisions that would repeat completed evidence work."""
+        if decision.decision == "recommendation" and (
+            state.product_candidates
+            or any(trace.tool_name == "semantic_search_products" for trace in state.tool_results)
+        ):
+            logger.warning(
+                "Ollama-backed Supervisor chose recommendation after product evidence already existed; "
+                "falling back to deterministic routing."
+            )
+            self.last_decision_source = "rule_based_fallback"
+            return self._fallback_policy.decide(state)
+        if decision.decision == "inventory":
+            has_fulfillable_inventory = any(
+                entry.get("sellable_quantity", 0) > 0 for entry in state.inventory_results
+            )
+            has_final_rerank = any(
+                trace.tool_name == "rank_products" and trace.summary.startswith("reranked")
+                for trace in state.tool_results
+            )
+            if state.product_candidates and has_fulfillable_inventory and has_final_rerank:
+                logger.warning(
+                    "Ollama-backed Supervisor chose inventory after fulfillment evidence was complete; "
+                    "falling back to deterministic routing."
+                )
+                self.last_decision_source = "rule_based_fallback"
+                return self._fallback_policy.decide(state)
+        return decision
 
     def decide(self, state: RetailGraphState) -> SupervisorDecision:
+        decision_source = "ollama"
         try:
             decision = self._llm_policy.decide(state)
-        except Exception as exc:  # noqa: BLE001 - any model/provider failure degrades safely
-            logger.warning(
-                "Ollama-backed Supervisor decision failed (%s); falling back to rule-based routing.",
-                exc,
-            )
-            return self._fallback_policy.decide(state)
+        except Exception as first_exc:  # noqa: BLE001 - any model/provider failure degrades safely
+            try:
+                decision = self._llm_policy.decide(state)
+                decision_source = "retry"
+            except Exception as second_exc:  # noqa: BLE001 - any model/provider failure degrades safely
+                logger.warning(
+                    "Ollama-backed Supervisor decision failed twice (%s; %s); falling back to rule-based routing.",
+                    first_exc,
+                    second_exc,
+                )
+                self.last_decision_source = "rule_based_fallback"
+                return self._fallback_policy.decide(state)
 
         if decision.decision not in _REACHABLE_DECISIONS:
+            try:
+                retry_decision = self._llm_policy.decide(state)
+                if retry_decision.decision in _REACHABLE_DECISIONS:
+                    self.last_decision_source = "retry"
+                    return retry_decision
+            except Exception as exc:  # noqa: BLE001 - retry failure falls through to deterministic fallback
+                logger.warning("Ollama-backed Supervisor retry after unreachable decision failed (%s).", exc)
             logger.warning(
                 "Ollama-backed Supervisor chose %r, which this graph cannot currently route "
                 "anywhere useful; falling back to rule-based routing instead.",
                 decision.decision,
             )
+            self.last_decision_source = "rule_based_fallback"
             return self._fallback_policy.decide(state)
 
-        return decision
+        self.last_decision_source = decision_source
+        return self._guard_stale_decision(state, decision)
     
 def get_supervisor_policy() -> SupervisorPolicy:
     """Build the SupervisorPolicy selected by centralized configuration.
@@ -129,6 +187,10 @@ def get_supervisor_policy() -> SupervisorPolicy:
     if settings.supervisor_policy == "ollama":
         from langchain_ollama import ChatOllama
 
-        chat_model = ChatOllama(model=settings.ollama_chat_model, base_url=settings.ollama_base_url)
+        chat_model = ChatOllama(
+            model=settings.ollama_chat_model,
+            base_url=settings.ollama_base_url,
+            temperature=settings.ollama_chat_temperature,
+        )
         return OllamaBackedSupervisorPolicy(chat_model)
     return RuleBasedSupervisorPolicy()

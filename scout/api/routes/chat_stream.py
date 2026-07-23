@@ -171,7 +171,7 @@ def _events_for_delta(
         next_agent = delta.get("next_agent")
         label = safe_events.NEXT_AGENT_LABELS.get(next_agent) if next_agent else None
         if label:
-            produced.append(make("agent_selected", label, {"agent": next_agent}))
+            produced.append(make("agent_selected", label))
         return produced
 
     intent = running_state.get("intent") or {}
@@ -185,19 +185,11 @@ def _events_for_delta(
         if not label:
             continue
 
-        if node_name == "response_verification":
+        if node_name in {"response_verification", "verification_agent"}:
             produced.append(
                 make(
                     "verification_started",
                     label,
-                    {"tool_name": trace.tool_name, "node_name": node_name},
-                )
-            )
-            produced.append(
-                make(
-                    "verification_completed",
-                    label,
-                    {"tool_name": trace.tool_name, "node_name": node_name, "status": trace.status},
                 )
             )
         else:
@@ -205,23 +197,14 @@ def _events_for_delta(
                 make(
                     "tool_started",
                     label,
-                    {"tool_name": trace.tool_name, "node_name": node_name},
-                )
-            )
-            produced.append(
-                make(
-                    "tool_completed",
-                    label,
-                    {"tool_name": trace.tool_name, "node_name": node_name, "status": trace.status},
                 )
             )
 
-    if node_name == "response_verification" and delta.get("workflow_status") == "in_progress":
+    if node_name in {"response_verification", "verification_agent"} and delta.get("workflow_status") == "in_progress":
         produced.append(
             make(
                 "workflow_replanned",
-                "Trying another option",
-                {"correction_count": delta.get("correction_count")},
+                "Stopped safely",
             )
         )
 
@@ -251,7 +234,8 @@ async def _generate_events(
             data=data or {},
         )
 
-    yield make_event("workflow_started", "Understanding your request", {"workflow_id": workflow_id})
+    yield make_event("workflow_started", "Understanding request", {"workflow_id": workflow_id})
+    emitted_activity_labels = {"Understanding request"}
 
     initial_state = build_initial_state(request, workflow_id)
     running_state: Dict[str, Any] = dict(initial_state)
@@ -273,16 +257,21 @@ async def _generate_events(
                 break
 
             for node_name, delta in chunk.items():
+                if delta is None:
+                    continue
                 _merge_delta(running_state, delta)
                 for event in _events_for_delta(
                     node_name, delta, running_state, workflow_id, session_id, counter
                 ):
+                    if event.label in emitted_activity_labels:
+                        continue
+                    emitted_activity_labels.add(event.label)
                     yield event
     except asyncio.TimeoutError:
         logger.error("stream_workflow_timeout", extra={"workflow_id": workflow_id})
         yield make_event(
             "workflow_failed",
-            "Scout could not finish in time",
+            "Stopped safely",
             {"code": "WORKFLOW_TIMEOUT", "message": "Scout could not complete the request in time. Please try again."},
         )
         yield make_event("stream_closed", "Stream closed", {"status": "closed"})
@@ -329,9 +318,10 @@ async def _generate_events(
         yield make_event("confirmation_required", "Please confirm this action", {"description": description})
     elif response.status == "failed":
         code, message = _failure_code_and_message(final_state)
-        yield make_event("workflow_failed", "Scout could not verify a safe answer", {"code": code, "message": message})
+        yield make_event("workflow_failed", "Stopped safely", {"code": code, "message": message})
 
-    yield make_event("final_response", "Here is what Scout found", response.model_dump(mode="json"))
+    final_label = "Completed" if response.status == "completed" else "Stopped safely"
+    yield make_event("final_response", final_label, response.model_dump(mode="json"))
     yield make_event("stream_closed", "Stream closed", {"status": "closed"})
 
 

@@ -25,7 +25,7 @@ def _state(**overrides):
         ("recommendation", "recommendation_agent"),
         ("inventory", "inventory_agent"),
         ("order", "order_agent"),
-        ("support", "support_agent"),
+        ("support", "external_offer_agent"),
         ("verification", "verification_agent"),
     ],
 )

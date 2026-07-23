@@ -9,3 +9,4 @@ langgraph==1.2.9
 langchain-core==1.5.0
 langchain-ollama==0.3.10
 pytest==9.1.1
+stripe==13.0.1

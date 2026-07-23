@@ -16,6 +16,31 @@ logger = logging.getLogger(__name__)
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 
+def _column_names(connection, table_name: str) -> set[str]:
+    return {row["name"] for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()}
+
+
+def apply_lightweight_migrations(connection) -> None:
+    checkout_columns = _column_names(connection, "checkout_sessions")
+    if "payment_provider" not in checkout_columns:
+        connection.execute("ALTER TABLE checkout_sessions ADD COLUMN payment_provider TEXT")
+    if "payment_intent_id" not in checkout_columns:
+        connection.execute("ALTER TABLE checkout_sessions ADD COLUMN payment_intent_id TEXT")
+    if "payment_status" not in checkout_columns:
+        connection.execute("ALTER TABLE checkout_sessions ADD COLUMN payment_status TEXT")
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+            event_id           TEXT PRIMARY KEY,
+            event_type         TEXT NOT NULL,
+            checkout_id        TEXT,
+            payment_intent_id  TEXT,
+            processed_at       TEXT NOT NULL
+        )
+        """
+    )
+
+
 def initialize_database(db_path: Optional[str] = None) -> None:
     """Create all Scout tables and indexes if they do not already exist.
 
@@ -27,6 +52,7 @@ def initialize_database(db_path: Optional[str] = None) -> None:
 
     with connection_scope(db_path) as connection:
         connection.executescript(schema_sql)
+        apply_lightweight_migrations(connection)
 
     logger.info("database_initialized", extra={"db_path": db_path or "default"})
 

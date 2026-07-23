@@ -71,6 +71,7 @@ from scout.agents.recommendation_agent import recommendation_agent_node, rerank_
 from scout.agents.response_verification import response_verification_node
 from scout.agents.understand_request import understand_request_node
 from scout.config import get_settings
+from scout.orchestration.limits import account_for_node_update, check_workflow_limits
 from scout.orchestration.routing import route_from_supervisor
 from scout.orchestration.state import RetailGraphState
 from scout.orchestration.supervisor import supervisor_node
@@ -78,11 +79,11 @@ from scout.orchestration.supervisor_policy import SupervisorPolicy, get_supervis
 
 _SUPERVISOR_ROUTES = {
     "recommendation_agent": "recommendation_agent",
-    "inventory_agent": END,
+    "inventory_agent": "inventory_agent",
     "order_agent": "order_agent",
-    "support_agent": END,
-    "verification_agent": END,
-    END: END,
+    "external_offer_agent": "external_offer_agent",
+    "verification_agent": "verification_agent",
+    END: "response_renderer",
 }
 
 
@@ -117,18 +118,73 @@ def route_after_verification(state: RetailGraphState) -> str:
     return "recommendation_agent" if state.workflow_status == "in_progress" else END
 
 
+def inventory_specialist_node(state: RetailGraphState) -> Dict[str, Any]:
+    """Run one bounded inventory/fulfillment action, then return to Supervisor."""
+    last_correction_index = -1
+    for index, trace in enumerate(state.tool_results):
+        if trace.tool_name == "response_verification" and trace.status == "error":
+            last_correction_index = index
+    tool_names = [trace.tool_name for trace in state.tool_results[last_correction_index + 1 :]]
+    if "check_store_inventory" not in tool_names:
+        return inventory_agent_node(state)
+    if "availability_evaluation" not in tool_names:
+        return availability_evaluation_node(state)
+    if products_needing_fulfillment(state) and "find_nearby_inventory" not in tool_names:
+        return nearby_store_search_node(state)
+    if products_needing_fulfillment(state) and "check_network_inventory" not in tool_names:
+        return network_delivery_search_node(state)
+    if products_needing_fulfillment(state) and "find_available_substitutes" not in tool_names:
+        return substitute_search_node(state)
+    return rerank_node(state)
+
+
+def verification_agent_node(state: RetailGraphState) -> Dict[str, Any]:
+    return response_verification_node(state)
+
+
+def response_renderer_node(state: RetailGraphState) -> Dict[str, Any]:
+    """Final rendering hook; response_verification already builds final_response."""
+    return {
+        "current_agent": "response_renderer",
+        "active_agent": "response_renderer",
+        "stop_reason": state.stop_reason or state.workflow_status,
+    }
+
+
+def _bounded_node(
+    node,
+    *,
+    counts_as_iteration: bool = True,
+    counts_tool_calls: bool = True,
+    enforce_precheck: bool = True,
+):
+    def wrapped(state: RetailGraphState) -> Dict[str, Any]:
+        if enforce_precheck:
+            limit_update = check_workflow_limits(state)
+            if limit_update is not None:
+                return limit_update
+        update = node(state)
+        return account_for_node_update(
+            state,
+            update,
+            counts_as_iteration=counts_as_iteration,
+            counts_tool_calls=counts_tool_calls,
+        )
+
+    return wrapped
+
+
 def build_retail_graph(policy: Optional[SupervisorPolicy] = None):
     """Build and compile Scout's first complete retail workflow graph.
 
     Args:
         policy: The Supervisor's decision-maker. Defaults to whatever
             `get_supervisor_policy()` (scout/orchestration/supervisor_policy.py)
-            selects from centralized configuration - `RuleBasedSupervisorPolicy`
-            unless `SUPERVISOR_POLICY=ollama` is set, in which case a real
-            local Ollama chat model decides Supervisor routing at runtime,
-            falling back to rule-based routing automatically if that model
-            is ever unreachable. Pass an explicit policy (as every existing
-            test does) to bypass configuration entirely.
+            selects from centralized configuration. By default this is
+            an Ollama-backed Supervisor that falls back to rule-based
+            routing automatically if the local model is unreachable.
+            Set `SUPERVISOR_POLICY=rule_based` to force deterministic
+            routing. Pass an explicit policy to bypass configuration.
 
     Returns:
         A compiled LangGraph graph. Call `.invoke(...)` directly, or use
@@ -139,55 +195,44 @@ def build_retail_graph(policy: Optional[SupervisorPolicy] = None):
    
     graph = StateGraph(RetailGraphState)
 
-    graph.add_node("understand_request", understand_request_node)
+    graph.add_node("understand_request", _bounded_node(understand_request_node, counts_as_iteration=False))
     graph.add_node("supervisor", lambda state: supervisor_node(state, active_policy))
-    graph.add_node("recommendation_agent", recommendation_agent_node)
-    graph.add_node("order_agent", order_agent_node)
-    graph.add_node("inventory_agent", inventory_agent_node)
-    graph.add_node("availability_evaluation", availability_evaluation_node)
-    graph.add_node("nearby_store_search", nearby_store_search_node)
-    graph.add_node("network_delivery_search", network_delivery_search_node)
-    graph.add_node("substitute_search", substitute_search_node)
-    graph.add_node("reranking", rerank_node)
-    graph.add_node("external_offer_fallback", external_offer_fallback_node)
-    graph.add_node("response_verification", response_verification_node)
+    graph.add_node("recommendation_agent", _bounded_node(recommendation_agent_node))
+    graph.add_node("order_agent", _bounded_node(order_agent_node))
+    graph.add_node("inventory_agent", _bounded_node(inventory_specialist_node))
+    graph.add_node("external_offer_agent", _bounded_node(external_offer_fallback_node))
+    graph.add_node(
+        "verification_agent",
+        _bounded_node(
+            verification_agent_node,
+            counts_as_iteration=False,
+            counts_tool_calls=False,
+            enforce_precheck=False,
+        ),
+    )
+    graph.add_node(
+        "response_renderer",
+        _bounded_node(
+            response_renderer_node,
+            counts_as_iteration=False,
+            counts_tool_calls=False,
+            enforce_precheck=False,
+        ),
+    )
 
     graph.add_edge(START, "understand_request")
     graph.add_edge("understand_request", "supervisor")
     graph.add_conditional_edges("supervisor", route_from_supervisor, _SUPERVISOR_ROUTES)
-    graph.add_edge("order_agent", END)
-    graph.add_edge("recommendation_agent", "inventory_agent")
-    graph.add_edge("inventory_agent", "availability_evaluation")
+    graph.add_edge("order_agent", "supervisor")
+    graph.add_edge("recommendation_agent", "supervisor")
+    graph.add_edge("inventory_agent", "supervisor")
+    graph.add_edge("external_offer_agent", "supervisor")
     graph.add_conditional_edges(
-        "availability_evaluation",
-        route_after_availability,
-        {"nearby_store_search": "nearby_store_search", "reranking": "reranking"},
-    )
-    graph.add_conditional_edges(
-        "nearby_store_search",
-        route_after_nearby,
-        {"network_delivery_search": "network_delivery_search", "reranking": "reranking"},
-    )
-    graph.add_conditional_edges(
-        "network_delivery_search",
-        route_after_network_delivery,
-        {"substitute_search": "substitute_search", "reranking": "reranking"},
-    )
-    graph.add_edge("substitute_search", "reranking")
-    graph.add_conditional_edges(
-        "reranking",
-        route_after_reranking,
-        {
-            "external_offer_fallback": "external_offer_fallback",
-            "response_verification": "response_verification",
-        },
-    )
-    graph.add_edge("external_offer_fallback", "response_verification")
-    graph.add_conditional_edges(
-        "response_verification",
+        "verification_agent",
         route_after_verification,
-        {"recommendation_agent": "recommendation_agent", END: END},
+        {"recommendation_agent": "recommendation_agent", END: "response_renderer"},
     )
+    graph.add_edge("response_renderer", END)
 
     return graph.compile()
 

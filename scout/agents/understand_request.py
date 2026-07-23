@@ -1,13 +1,10 @@
 """Understand request: turn the raw customer_query into structured intent.
 
-Deterministic, regex/keyword-based extraction - there is no LLM or
-Ollama integration in this codebase yet (Phase 5's job, explicitly
-skipped so far), so this is a transparent, testable placeholder for
-real NLU. It extracts exactly what CLAUDE.md's primary example
-workflow needs: a product category and search keyword, a maximum
-price, whether pickup is requested, and a location resolved to one of
-Scout's real stores via the find_store_by_location MCP tool
-(scout/mcp/store_tools.py) - never a guessed store_id.
+Structured extraction asks the configured local Ollama chat model for
+strict JSON, validates it with Pydantic, retries once on malformed JSON,
+and falls back to the original deterministic parser whenever the model
+path is unavailable or invalid. The node still emits the legacy fields
+the existing graph uses, so downstream agents do not need to change.
 
 Idempotent: if state.intent is already set (e.g. a test constructing a
 precise scenario, or a resumed workflow), this node leaves it unchanged
@@ -21,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from scout.mcp.store_tools import find_store_by_location
 from scout.orchestration.limits import check_step_budget
 from scout.orchestration.state import EvidenceEntry, RetailGraphState, WorkflowError
+from scout.services.intent_service import StructuredIntent, extract_intent_with_ollama
 
 # Deliberately small and literal: real category/attribute extraction is
 # the Recommendation Agent's job once Phase 5 (Ollama integration)
@@ -161,6 +159,89 @@ def _extract_pickup_requested(query: str) -> bool:
     return bool(_PICKUP_PATTERN.search(query))
 
 
+def _deterministic_structured_intent(query: str) -> StructuredIntent:
+    query_lower = query.lower()
+    order_match = _ORDER_ID_PATTERN.search(query)
+    if _ORDER_REQUEST_PATTERN.search(query_lower):
+        order_action = _extract_order_action(query_lower)
+        request_type = "order_eligibility" if order_action.endswith("_eligibility") else "order_status"
+        return StructuredIntent(
+            request_type=request_type,
+            order_id=order_match.group(0).lower() if order_match else None,
+            needs_clarification=False,
+            confidence=0.7,
+        )
+
+    category = _extract_category(query_lower)
+    product_type = _extract_subcategory(query_lower)
+    budget_max = _extract_max_price(query)
+    location = _extract_location_text(query)
+    pickup_requested = _extract_pickup_requested(query)
+    deals = bool(_DEALS_PATTERN.search(query_lower))
+    has_product_signal = category is not None or product_type is not None or budget_max is not None or deals
+    if not has_product_signal and not location:
+        return StructuredIntent(
+            request_type="clarification",
+            needs_clarification=True,
+            clarification_question=(
+                "Could you tell me what product you're looking for, your budget, "
+                "and which store or area you'd like to check?"
+            ),
+            confidence=0.4,
+        )
+
+    return StructuredIntent(
+        request_type="deals" if deals else "product_search",
+        product_type=product_type,
+        category=category,
+        use_case=_extract_keyword(query_lower),
+        budget_max=budget_max,
+        location=location,
+        fulfillment_preference="pickup" if pickup_requested else None,
+        urgency="today" if "today" in query_lower else None,
+        needs_clarification=False,
+        confidence=0.65,
+    )
+
+
+def _legacy_intent_from_structured(structured: StructuredIntent, query: str) -> Dict[str, Any]:
+    query_lower = query.lower()
+    if structured.request_type in {"order_status", "order_eligibility"}:
+        order_action = _extract_order_action(query_lower)
+        if structured.request_type == "order_eligibility" and order_action == "status":
+            order_action = "cancel_eligibility" if "cancel" in query_lower else "return_eligibility"
+        return {
+            "request_type": "order",
+            "order_id": structured.order_id,
+            "order_action": order_action,
+            "structured_intent": structured.model_dump(mode="json"),
+        }
+
+    fulfillment = structured.fulfillment_preference
+    pickup_requested = fulfillment == "pickup" or _extract_pickup_requested(query)
+    return {
+        "request_type": "recommendation",
+        "category": structured.category or _extract_category(query_lower),
+        "subcategory": structured.product_type or _extract_subcategory(query_lower),
+        "keyword": structured.use_case or _extract_keyword(query_lower),
+        "max_price": structured.budget_max or _extract_max_price(query),
+        "attribute_filters": list(structured.attributes),
+        "deals_only": structured.request_type == "deals" or bool(_DEALS_PATTERN.search(query_lower)),
+        "in_stock_only": True,
+        "fulfillment": fulfillment,
+        "pickup_requested": pickup_requested,
+        "location_text": structured.location or _extract_location_text(query),
+        "selected_store_id": None,
+        "selected_store_name": None,
+        "selected_store_latitude": None,
+        "selected_store_longitude": None,
+        "location_resolved": False,
+        "structured_intent": structured.model_dump(mode="json"),
+        "needs_clarification": structured.needs_clarification,
+        "clarification_question": structured.clarification_question,
+    }
+
+
 def understand_request_node(state: RetailGraphState) -> Dict[str, Any]:
     """Extract structured intent from state.customer_query.
 
@@ -178,37 +259,18 @@ def understand_request_node(state: RetailGraphState) -> Dict[str, Any]:
         return {"step_count": state.step_count + 1}
 
     query = state.customer_query
-    query_lower = query.lower()
+    deterministic = _deterministic_structured_intent(query)
+    extraction = extract_intent_with_ollama(query, fallback_intent=deterministic)
+    intent = _legacy_intent_from_structured(extraction.intent, query)
+    intent["extraction_source"] = extraction.extraction_source
 
-    if _ORDER_REQUEST_PATTERN.search(query_lower):
-        order_match = _ORDER_ID_PATTERN.search(query)
+    if intent["request_type"] == "order":
         return {
             "step_count": state.step_count + 1,
-            "intent": {
-                "request_type": "order",
-                "order_id": order_match.group(0).lower() if order_match else None,
-                "order_action": _extract_order_action(query_lower),
-            },
+            "intent": intent,
+            "structured_intent": extraction.intent,
+            "intent_extraction_source": extraction.extraction_source,
         }
-
-    intent: Dict[str, Any] = {
-        "request_type": "recommendation",
-        "category": _extract_category(query_lower),
-        "subcategory": _extract_subcategory(query_lower),
-        "keyword": _extract_keyword(query_lower),
-        "max_price": _extract_max_price(query),
-        "attribute_filters": [],
-        "deals_only": bool(_DEALS_PATTERN.search(query_lower)),
-        "in_stock_only": True,
-        "fulfillment": None,
-        "pickup_requested": _extract_pickup_requested(query),
-        "location_text": _extract_location_text(query),
-        "selected_store_id": None,
-        "selected_store_name": None,
-        "selected_store_latitude": None,
-        "selected_store_longitude": None,
-        "location_resolved": False,
-    }
 
     # API filters are already validated by ChatRequest. They are hard
     # customer constraints and therefore override any looser value
@@ -259,6 +321,8 @@ def understand_request_node(state: RetailGraphState) -> Dict[str, Any]:
     update: Dict[str, Any] = {
         "step_count": state.step_count + 1,
         "intent": intent,
+        "structured_intent": extraction.intent,
+        "intent_extraction_source": extraction.extraction_source,
     }
     if evidence:
         update["evidence"] = evidence

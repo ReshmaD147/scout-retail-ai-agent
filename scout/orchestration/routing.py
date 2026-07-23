@@ -31,10 +31,15 @@ _PAUSED_OR_TERMINAL_STATUSES = {
 
 _DECISION_TO_NODE = {
     "recommendation": "recommendation_agent",
+    "recommendation_agent": "recommendation_agent",
     "inventory": "inventory_agent",
+    "inventory_agent": "inventory_agent",
     "order": "order_agent",
-    "support": "support_agent",
+    "order_agent": "order_agent",
+    "support": "external_offer_agent",
+    "external_offer_agent": "external_offer_agent",
     "verification": "verification_agent",
+    "verification_agent": "verification_agent",
 }
 """Only the five decisions that route to a specialist agent appear
 here. "finish" and "safe_failure" end the graph; "clarification" and

@@ -349,14 +349,15 @@ def test_response_contains_no_chain_of_thought_prompts_sql_or_secrets(client):
         assert forbidden not in rendered
 
     known_activities = {
-        "Understanding your request",
-        "Searching the product catalog",
-        "Ranking matching products",
-        "Checking your selected store's inventory",
-        "Comparing fulfillment options",
-        "Searching nearby stores",
+        "Understanding request",
+        "Recommendation Agent searching products",
+        "Inventory Agent checking selected store",
+        "Preparing response",
+        "Inventory Agent checking nearby stores",
         "Finding available substitutes",
-        "Verifying product details",
+        "External Offer Agent searching alternatives",
+        "Order Agent retrieving order evidence",
+        "Verifying claims",
     }
     assert set(response.json()["activity_events"]) <= known_activities
 

@@ -45,7 +45,7 @@ def test_produces_a_two_step_plan_without_pickup():
     decision = policy.decide(state)
 
     assert decision.decision == "recommendation"
-    assert [step.agent for step in decision.plan] == ["recommendation", "inventory"]
+    assert [step.agent for step in decision.plan] == ["recommendation"]
     assert "Footwear" in decision.goal
 
 
@@ -64,8 +64,33 @@ def test_adds_a_third_step_when_pickup_and_a_store_are_both_resolved():
     decision = policy.decide(state)
 
     assert decision.decision == "recommendation"
-    assert len(decision.plan) == 3
+    assert [step.agent for step in decision.plan] == ["recommendation"]
     assert decision.needs_multiple_agents is True
+
+
+def test_routes_to_inventory_after_recommendation_when_fulfillment_is_missing():
+    policy = RuleBasedSupervisorPolicy()
+    state = _state(
+        intent={"category": "Footwear", "max_price": 100.0, "pickup_requested": True, "selected_store_id": "STR-001"},
+        product_candidates=[
+            {
+                "product_id": "FTW-004",
+                "name": "ComfortPro Shift Support",
+                "brand": "ComfortPro",
+                "category": "Footwear",
+                "subcategory": "Work Shoes",
+                "price": 89.99,
+                "rating": 4.6,
+                "review_count": 100,
+                "active": True,
+            }
+        ],
+    )
+
+    decision = policy.decide(state)
+
+    assert decision.decision == "inventory"
+    assert "fulfillment evidence is missing" in decision.decision_summary
 
 
 def test_treats_missing_intent_as_completely_vague():

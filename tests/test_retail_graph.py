@@ -31,7 +31,8 @@ from scout.config import get_settings
 from scout.database.connection import connection_scope
 from scout.mcp.product_tools import get_product_details as _real_get_product_details
 from scout.orchestration.graph import build_retail_graph, run_graph
-from scout.orchestration.limits import SAFE_FAILURE_MESSAGE
+from scout.orchestration.limits import SAFE_FAILURE_MESSAGE, account_for_node_update
+from scout.orchestration.state import RetailGraphState, ToolCallTrace
 
 
 @pytest.fixture(autouse=True)
@@ -106,6 +107,66 @@ def test_the_workflow_stops_safely_at_the_step_limit(monkeypatch):
     assert any(error.error_type == "workflow_limit_reached" for error in result.errors)
 
 
+def test_the_workflow_stops_safely_at_the_agent_iteration_limit(monkeypatch):
+    monkeypatch.setenv("MAX_AGENT_ITERATIONS", "1")
+    get_settings.cache_clear()
+
+    result = run_graph(
+        session_id="S5-iterations",
+        customer_query="Find comfortable work shoes under $100 that I can pick up today near Maple Grove.",
+    )
+
+    assert result.workflow_status == "stopped_at_limit"
+    assert result.stop_reason == "agent_iteration_limit"
+    assert result.final_response == SAFE_FAILURE_MESSAGE
+
+
+def test_the_workflow_stops_safely_at_the_tool_call_limit(monkeypatch):
+    monkeypatch.setenv("MAX_TOOL_CALLS", "1")
+    get_settings.cache_clear()
+
+    result = run_graph(
+        session_id="S5-tools",
+        customer_query="Find comfortable work shoes under $100 that I can pick up today near Maple Grove.",
+    )
+
+    assert result.workflow_status == "stopped_at_limit"
+    assert result.stop_reason == "tool_call_limit"
+    assert result.final_response == SAFE_FAILURE_MESSAGE
+
+
+def test_the_workflow_stops_safely_on_repeated_identical_tool_calls():
+    graph = build_retail_graph()
+    result = graph.invoke(
+        {
+            "session_id": "S5-repeat",
+            "customer_query": "repeat guard",
+            "repeated_call_counts": {'{"summary":"same args","tool_name":"search_products"}': 2},
+        }
+    )
+    state = RetailGraphState.model_validate(result)
+
+    assert state.workflow_status == "stopped_at_limit"
+    assert state.stop_reason == "repeated_tool_call_limit"
+    assert state.final_response == SAFE_FAILURE_MESSAGE
+
+
+def test_no_op_tool_traces_do_not_trip_repeated_call_limit():
+    state = RetailGraphState(session_id="S5-no-op", customer_query="Work shoes under $100")
+    update = {
+        "tool_results": [
+            ToolCallTrace(tool_name="find_nearby_inventory", status="success", summary="no nearby search needed"),
+            ToolCallTrace(tool_name="find_available_substitutes", status="success", summary="no substitute search needed"),
+        ]
+    }
+
+    accounted = account_for_node_update(state, update, counts_as_iteration=True)
+
+    assert accounted["iteration_count"] == 1
+    assert "tool_call_count" not in accounted
+    assert accounted["repeated_call_counts"] == {}
+
+
 def test_a_selected_store_database_failure_does_not_crash_and_recovers_nearby(monkeypatch):
     def _raise(*args, **kwargs):
         raise sqlite3.Error("simulated outage")
@@ -142,6 +203,10 @@ def test_a_transient_verification_failure_self_heals_via_one_correction(monkeypa
         return result
 
     monkeypatch.setattr("scout.agents.response_verification.get_product_details", _flaky_get_product_details)
+    monkeypatch.setenv("MAX_AGENT_ITERATIONS", "20")
+    monkeypatch.setenv("MAX_TOOL_CALLS", "20")
+    monkeypatch.setenv("MAX_IDENTICAL_TOOL_CALL_COUNT", "2")
+    get_settings.cache_clear()
 
     result = run_graph(
         session_id="S9",
@@ -170,6 +235,10 @@ def test_a_persistent_verification_failure_exhausts_corrections_and_safe_fails(m
         return corrupted
 
     monkeypatch.setattr("scout.agents.response_verification.get_product_details", _always_wrong_name)
+    monkeypatch.setenv("MAX_AGENT_ITERATIONS", "20")
+    monkeypatch.setenv("MAX_TOOL_CALLS", "20")
+    monkeypatch.setenv("MAX_IDENTICAL_TOOL_CALL_COUNT", "2")
+    get_settings.cache_clear()
 
     result = run_graph(
         session_id="S10",
@@ -180,7 +249,7 @@ def test_a_persistent_verification_failure_exhausts_corrections_and_safe_fails(m
     assert result.workflow_status == "failed"
     assert result.final_response == SAFE_FAILURE_MESSAGE
     assert result.correction_count == settings.max_correction_attempts
-    assert sum(1 for error in result.errors if error.step == "verify_product_name") >= settings.max_correction_attempts + 1
+    assert sum(1 for error in result.errors if error.step == "verify_product_name") >= settings.max_correction_attempts
 
 
 def test_build_retail_graph_compiles_and_is_reusable():
@@ -232,3 +301,71 @@ def test_external_fallback_runs_only_after_all_internal_inventory_is_exhausted()
     assert "find_available_substitutes" in tool_names
     assert "search_external_offers" in tool_names
     assert tool_names.index("search_external_offers") > tool_names.index("find_available_substitutes")
+
+
+def test_order_status_request_routes_directly_to_order_agent(seeded_db_path):
+    from tests.order_helpers import create_pickup_order
+
+    created = create_pickup_order(seeded_db_path, "dynamic-order")
+
+    result = run_graph(
+        session_id="dynamic-order",
+        customer_query=f"Status for order {created.order_id}",
+    )
+
+    tool_names = [trace.tool_name for trace in result.tool_results]
+    assert result.workflow_status == "completed"
+    assert "lookup_order" in tool_names
+    assert "semantic_search_products" not in tool_names
+    assert "check_store_inventory" not in tool_names
+
+
+def test_selected_store_has_stock_skips_nearby_and_substitute_search():
+    result = run_graph(
+        session_id="dynamic-selected-stock",
+        customer_query="Find running shoes under $100 that I can pick up today near Maple Grove.",
+    )
+
+    tool_names = [trace.tool_name for trace in result.tool_results]
+    assert result.workflow_status == "completed"
+    assert "check_store_inventory" in tool_names
+    assert "find_nearby_inventory" not in tool_names
+    assert "find_available_substitutes" not in tool_names
+
+
+def test_selected_store_unavailable_supervisor_chooses_another_valid_action():
+    result = run_graph(
+        session_id="dynamic-selected-unavailable",
+        customer_query="Find work shoes under $100 that I can pick up today near Maple Grove.",
+    )
+
+    tool_names = [trace.tool_name for trace in result.tool_results]
+    assert result.workflow_status == "completed"
+    assert "check_store_inventory" in tool_names
+    assert any(name in tool_names for name in {"find_nearby_inventory", "check_network_inventory", "find_available_substitutes"})
+
+
+def test_product_search_without_pickup_does_not_force_external_fallback():
+    result = run_graph(session_id="dynamic-product", customer_query="Wireless earbuds under $200")
+
+    tool_names = [trace.tool_name for trace in result.tool_results]
+    assert result.workflow_status == "completed"
+    assert "semantic_search_products" in tool_names
+    assert "search_external_offers" not in tool_names
+    assert result.product_candidates or "couldn't find" in result.final_response
+
+
+def test_pickup_request_uses_recommendation_and_inventory_without_exact_sequence_requirement():
+    result = run_graph(
+        session_id="dynamic-pickup",
+        customer_query="Find comfortable work shoes under $100 that I can pick up today near Maple Grove.",
+    )
+
+    tool_names = {trace.tool_name for trace in result.tool_results}
+    assert result.workflow_status == "completed"
+    assert "semantic_search_products" in tool_names
+    assert "check_store_inventory" in tool_names
+    assert any(
+        name in tool_names
+        for name in {"find_nearby_inventory", "check_network_inventory", "find_available_substitutes"}
+    )

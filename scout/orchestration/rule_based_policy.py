@@ -1,4 +1,4 @@
-"""A deterministic SupervisorPolicy for Step 10's fixed pipeline.
+"""A deterministic SupervisorPolicy for Scout's bounded cyclic graph.
 
 scout/orchestration/supervisor_policy.py's LangChainSupervisorPolicy
 needs a real chat model, and no model is wired in yet (Ollama
@@ -23,11 +23,17 @@ from scout.orchestration.supervisor_decision import SupervisorDecision
 
 
 class RuleBasedSupervisorPolicy:
-    """Decide "clarification" or "recommendation" from extracted intent alone."""
+    """Choose the next bounded specialist action from current state."""
 
     def decide(self, state: RetailGraphState) -> SupervisorDecision:
         intent = state.intent or {}
         if intent.get("request_type") == "order":
+            if state.order_context is not None or state.final_response:
+                return SupervisorDecision(
+                    decision="finish",
+                    goal="look up the customer order and report verified status",
+                    decision_summary="order evidence has been collected",
+                )
             return SupervisorDecision(
                 decision="order",
                 goal="look up the customer order and report verified status",
@@ -64,6 +70,13 @@ class RuleBasedSupervisorPolicy:
                 ),
             )
 
+        if state.workflow_status in {"failed", "stopped_at_limit"}:
+            return SupervisorDecision(
+                decision="safe_failure",
+                goal=state.goal or "complete the request safely",
+                decision_summary="workflow cannot continue safely",
+            )
+
         if pickup_requested and not location_text and not selected_store_id:
             return SupervisorDecision(
                 decision="clarification",
@@ -81,6 +94,84 @@ class RuleBasedSupervisorPolicy:
                     f'I couldn\'t find a Scout store matching "{location_text}" - could you '
                     "confirm the city or store name?"
                 ),
+            )
+
+        if not state.product_candidates and not state.external_offers:
+            if any(trace.tool_name == "find_available_substitutes" for trace in state.tool_results):
+                if any(trace.tool_name == "search_external_offers" for trace in state.tool_results):
+                    return SupervisorDecision(
+                        decision="verification",
+                        goal=state.goal or f"find {category or 'a matching product'} within budget",
+                        decision_summary="external fallback evidence is ready for verification",
+                    )
+                return SupervisorDecision(
+                    decision="support",
+                    goal=state.goal or f"find {category or 'a matching product'} within budget",
+                    decision_summary="internal options are insufficient; routing to external offers",
+                )
+            if any(trace.tool_name == "semantic_search_products" for trace in state.tool_results):
+                return SupervisorDecision(
+                    decision="verification",
+                    goal=state.goal or f"find {category or 'a matching product'} within budget",
+                    decision_summary="no internal products matched; verifying a no-results response",
+                )
+            return SupervisorDecision(
+                decision="recommendation",
+                goal=f"find {category or 'a matching product'} within budget and confirm fulfillment",
+                decision_summary="product evidence is missing; routing to the Recommendation Agent",
+                plan=[
+                    PlanStep(step_id="recommendation", description="find candidate products within budget", agent="recommendation")
+                ],
+                needs_multiple_agents=bool(pickup_requested),
+            )
+
+        if state.product_candidates:
+            has_inventory_trace = any(
+                trace.tool_name in {
+                    "check_store_inventory",
+                    "availability_evaluation",
+                    "find_nearby_inventory",
+                    "check_network_inventory",
+                    "find_available_substitutes",
+                }
+                for trace in state.tool_results
+            )
+            has_fulfillable_inventory = any(
+                entry.get("sellable_quantity", 0) > 0 for entry in state.inventory_results
+            )
+            has_final_rerank = any(
+                trace.tool_name == "rank_products" and trace.summary.startswith("reranked")
+                for trace in state.tool_results
+            )
+            if not has_inventory_trace or not has_fulfillable_inventory or not has_final_rerank:
+                return SupervisorDecision(
+                    decision="inventory",
+                    goal=f"find {category or 'a matching product'} within budget and confirm fulfillment",
+                    decision_summary="fulfillment evidence is missing; routing to the Inventory Agent",
+                    plan=[
+                        PlanStep(step_id="inventory", description="check bounded fulfillment evidence", agent="inventory")
+                    ],
+                    needs_multiple_agents=True,
+                )
+
+            return SupervisorDecision(
+                decision="verification",
+                goal=f"find {category or 'a matching product'} within budget and confirm fulfillment",
+                decision_summary="product and fulfillment evidence are ready for verification",
+            )
+
+        if not state.product_candidates and not state.external_offers:
+            return SupervisorDecision(
+                decision="safe_failure",
+                goal=state.goal or "find a matching product",
+                decision_summary="no internal or external options are available",
+            )
+
+        if state.external_offers:
+            return SupervisorDecision(
+                decision="verification",
+                goal=state.goal or "find a safe external alternative",
+                decision_summary="external offer evidence is ready for verification",
             )
 
         plan = [

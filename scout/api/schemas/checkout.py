@@ -3,6 +3,8 @@
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from scout.services.checkout_service import (
+    CheckoutPaymentIntent,
+    CheckoutPaymentStatus,
     CheckoutReview,
     OrderConfirmation,
     ShippingAddress,
@@ -42,10 +44,25 @@ class ConfirmCheckoutRequest(BaseModel):
         return _trimmed(value)
 
 
+class CreatePaymentIntentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    session_id: str = Field(min_length=1, max_length=200)
+    idempotency_key: str = Field(min_length=8, max_length=200)
+
+    @field_validator("session_id", "idempotency_key")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        return _trimmed(value)
+
+
 __all__ = [
     "CheckoutReview",
     "OrderConfirmation",
+    "CheckoutPaymentIntent",
+    "CheckoutPaymentStatus",
     "ShippingAddress",
     "CreateCheckoutSessionRequest",
     "ConfirmCheckoutRequest",
+    "CreatePaymentIntentRequest",
 ]

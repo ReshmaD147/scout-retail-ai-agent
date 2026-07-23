@@ -23,9 +23,11 @@ from scout.orchestration.state import (
     PendingConfirmation,
     PlanStep,
     RetailGraphState,
+    ToolHistoryRecord,
     ToolCallTrace,
     WorkflowError,
 )
+from scout.services.intent_service import StructuredIntent
 
 
 def _minimal_state(**overrides):
@@ -44,24 +46,41 @@ def test_minimal_construction_applies_sensible_defaults():
 
     assert state.messages == []
     assert state.intent is None
+    assert state.original_user_query == "find comfortable work shoes under $100"
+    assert state.structured_intent is None
     assert state.goal is None
+    assert state.customer_goal is None
     assert state.plan == []
     assert state.completed_steps == []
     assert state.pending_steps == []
     assert state.active_agent is None
+    assert state.current_agent is None
     assert state.next_agent is None
+    assert state.concise_decision_reason is None
     assert state.product_candidates == []
+    assert state.candidate_products == []
+    assert state.selected_products == []
     assert state.inventory_results == []
+    assert state.fulfillment_options == []
     assert state.order_context is None
+    assert state.order_evidence == []
     assert state.policy_results == []
     assert state.tool_results == []
+    assert state.tool_history == []
     assert state.evidence == []
+    assert state.proposed_claims == []
+    assert state.verification_result is None
     assert state.errors == []
     assert state.retry_count == 0
     assert state.step_count == 0
+    assert state.iteration_count == 0
+    assert state.tool_call_count == 0
+    assert state.repeated_call_counts == {}
     assert state.pending_confirmation is None
     assert state.workflow_status == "in_progress"
     assert state.final_response is None
+    assert state.stop_reason is None
+    assert state.workflow_started_at is None
 
 
 # ---------------------------------------------------------------------------
@@ -102,6 +121,31 @@ def test_retry_count_rejects_negative():
 def test_step_count_rejects_negative():
     with pytest.raises(ValidationError):
         _minimal_state(step_count=-1)
+
+
+def test_iteration_count_rejects_negative():
+    with pytest.raises(ValidationError):
+        _minimal_state(iteration_count=-1)
+
+
+def test_tool_call_count_rejects_negative():
+    with pytest.raises(ValidationError):
+        _minimal_state(tool_call_count=-1)
+
+
+def test_repeated_call_counts_reject_negative_counts():
+    with pytest.raises(ValidationError):
+        _minimal_state(repeated_call_counts={"inventory:check_store_inventory": -1})
+
+
+def test_concise_decision_reason_rejects_long_text():
+    with pytest.raises(ValidationError):
+        _minimal_state(concise_decision_reason="x" * 301)
+
+
+def test_workflow_started_at_rejects_invalid_timestamp():
+    with pytest.raises(ValidationError):
+        _minimal_state(workflow_started_at="yesterday")
 
 
 def test_workflow_status_accepts_a_valid_value():
@@ -154,6 +198,50 @@ def test_tool_call_trace_accepts_success_and_error():
 def test_tool_call_trace_rejects_unknown_status():
     with pytest.raises(ValidationError):
         ToolCallTrace(tool_name="check_store_inventory", status="pending", summary="...")
+
+
+def test_tool_history_record_requires_the_full_trace_shape():
+    record = ToolHistoryRecord(
+        agent_name="inventory",
+        tool_name="check_store_inventory",
+        validated_arguments={"product_id": "FTW-004", "store_id": "STR-001"},
+        success=True,
+        evidence_id="ev-1",
+        sequence_number=1,
+        timestamp="2026-07-23T12:00:00+00:00",
+        error=None,
+    )
+
+    assert record.agent_name == "inventory"
+    assert record.tool_name == "check_store_inventory"
+    assert record.validated_arguments["product_id"] == "FTW-004"
+    assert record.evidence_id == "ev-1"
+
+
+def test_tool_history_record_rejects_missing_agent_name():
+    with pytest.raises(ValidationError):
+        ToolHistoryRecord(tool_name="check_store_inventory", success=True, sequence_number=1)
+
+
+def test_tool_history_record_rejects_non_positive_sequence_number():
+    with pytest.raises(ValidationError):
+        ToolHistoryRecord(
+            agent_name="inventory",
+            tool_name="check_store_inventory",
+            success=True,
+            sequence_number=0,
+        )
+
+
+def test_tool_history_record_rejects_invalid_timestamp():
+    with pytest.raises(ValidationError):
+        ToolHistoryRecord(
+            agent_name="inventory",
+            tool_name="check_store_inventory",
+            success=True,
+            sequence_number=1,
+            timestamp="not-a-date",
+        )
 
 
 def test_workflow_error_accepts_a_known_category():
@@ -216,6 +304,34 @@ def test_product_candidates_rejects_a_dict_missing_required_fields():
         _minimal_state(product_candidates=[incomplete])
 
 
+def test_new_state_names_are_populated_from_existing_graph_fields():
+    structured = StructuredIntent(
+        request_type="product_search",
+        product_type="Work",
+        category="Footwear",
+        confidence=0.9,
+    )
+    product = ProductSummary(**_product_summary_kwargs())
+    state = _minimal_state(
+        intent={"structured_intent": structured.model_dump(mode="json"), "extraction_source": "retry"},
+        goal="find work shoes",
+        active_agent="recommendation",
+        product_candidates=[product],
+        inventory_results=[{"product_id": "FTW-004", "sellable_quantity": 2}],
+        order_context={"order_id": "ORD-1"},
+        step_count=3,
+    )
+
+    assert state.structured_intent == structured
+    assert state.intent_extraction_source == "retry"
+    assert state.customer_goal == "find work shoes"
+    assert state.current_agent == "recommendation"
+    assert state.candidate_products == [product]
+    assert state.fulfillment_options == [{"product_id": "FTW-004", "sellable_quantity": 2}]
+    assert state.order_evidence == [{"order_id": "ORD-1"}]
+    assert state.iteration_count == 0
+
+
 # ---------------------------------------------------------------------------
 # Reducer wiring - which fields are Annotated with a reducer, and which
 # are deliberately plain "replace" fields.
@@ -240,6 +356,10 @@ def test_tool_results_uses_operator_add():
     assert operator.add in _annotation_metadata("tool_results")
 
 
+def test_tool_history_uses_operator_add():
+    assert operator.add in _annotation_metadata("tool_history")
+
+
 def test_evidence_uses_operator_add():
     assert operator.add in _annotation_metadata("evidence")
 
@@ -253,9 +373,14 @@ def test_errors_uses_operator_add():
     [
         "pending_steps",
         "product_candidates",
+        "candidate_products",
+        "selected_products",
         "inventory_results",
+        "fulfillment_options",
+        "order_evidence",
         "policy_results",
         "plan",
+        "proposed_claims",
     ],
 )
 def test_replace_fields_have_no_reducer_metadata(field_name):
@@ -305,29 +430,74 @@ def test_a_fully_populated_state_is_json_serializable():
     state = RetailGraphState(
         session_id="SESSION-1",
         customer_query="find comfortable work shoes under $100",
+        original_user_query="find comfortable work shoes under $100",
         messages=[HumanMessage(content="find comfortable work shoes under $100", id="1")],
         intent={"category": "Footwear", "max_price": 100},
+        structured_intent=StructuredIntent(
+            request_type="product_search",
+            product_type="Work",
+            category="Footwear",
+            budget_max=100,
+            confidence=0.9,
+        ),
+        intent_extraction_source="llm",
         goal="find and confirm fulfillment for work shoes under $100",
+        customer_goal="find and confirm fulfillment for work shoes under $100",
+        concise_decision_reason="Pickup was requested, but selected-store inventory has not been checked.",
         plan=[PlanStep(step_id="1", description="check selected store", agent="inventory")],
         completed_steps=["1"],
         pending_steps=["2"],
         active_agent="inventory",
+        current_agent="inventory",
         next_agent="recommendation",
+        supervisor_decision_source="ollama",
         product_candidates=[ProductSummary(**_product_summary_kwargs())],
+        candidate_products=[ProductSummary(**_product_summary_kwargs())],
+        selected_products=[ProductSummary(**_product_summary_kwargs())],
         inventory_results=[{"store_id": "STR-001", "sellable_quantity": 0}],
+        fulfillment_options=[{"store_id": "STR-001", "sellable_quantity": 0}],
         order_context={"order_id": "ORD-1"},
+        order_evidence=[{"order_id": "ORD-1", "status": "confirmed"}],
         policy_results=[{"policy": "returns", "window_days": 30}],
         tool_results=[ToolCallTrace(tool_name="check_store_inventory", status="success", summary="checked")],
+        tool_history=[
+            ToolHistoryRecord(
+                agent_name="inventory",
+                tool_name="check_store_inventory",
+                validated_arguments={"product_id": "FTW-004", "store_id": "STR-001"},
+                success=True,
+                evidence_id="ev-1",
+                sequence_number=1,
+                timestamp="2026-07-23T12:00:00+00:00",
+                error=None,
+            )
+        ],
         evidence=[EvidenceEntry(source="check_store_inventory", claim="out of stock at STR-001")],
+        proposed_claims=[
+            {
+                "type": "store_inventory",
+                "product_id": "FTW-004",
+                "store_id": "STR-001",
+                "quantity": 0,
+            }
+        ],
+        verification_result={"verified": False},
         errors=[WorkflowError(error_type="not_found", message="No store found")],
         retry_count=1,
         step_count=2,
+        iteration_count=2,
+        tool_call_count=1,
+        repeated_call_counts={"inventory:check_store_inventory": 1},
         pending_confirmation=PendingConfirmation(action_type="refund", description="Refund ORD-1"),
+        workflow_started_at="2026-07-23T12:00:00+00:00",
         workflow_status="awaiting_confirmation",
         final_response=None,
+        stop_reason="awaiting_customer_confirmation",
     )
 
     payload = state.model_dump_json()
 
     assert "SESSION-1" in payload
     assert "awaiting_confirmation" in payload
+    assert "Pickup was requested" in payload
+    assert "chain-of-thought" not in payload.lower()

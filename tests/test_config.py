@@ -12,6 +12,14 @@ from pydantic import ValidationError
 from scout.config import Settings
 
 
+def test_settings_default_supervisor_policy_is_ollama_with_low_temperature(monkeypatch):
+    monkeypatch.delenv("SUPERVISOR_POLICY", raising=False)
+    settings = Settings()
+
+    assert settings.supervisor_policy == "ollama"
+    assert settings.ollama_chat_temperature == 0.1
+
+
 def test_settings_accepts_a_valid_delivery_window():
     settings = Settings(standard_delivery_min_days=3, standard_delivery_max_days=5)
 
@@ -36,10 +44,21 @@ def test_settings_rejects_maximum_days_below_minimum_days():
 
 
 def test_settings_accepts_valid_step_and_retry_limits():
-    settings = Settings(max_workflow_steps=10, max_retries=2)
+    settings = Settings(
+        max_workflow_steps=10,
+        max_retries=2,
+        max_agent_iterations=8,
+        max_tool_calls=10,
+        max_identical_tool_call_count=1,
+        max_correction_attempts=1,
+    )
 
     assert settings.max_workflow_steps == 10
     assert settings.max_retries == 2
+    assert settings.max_agent_iterations == 8
+    assert settings.max_tool_calls == 10
+    assert settings.max_identical_tool_call_count == 1
+    assert settings.max_correction_attempts == 1
 
 
 def test_settings_rejects_a_max_workflow_steps_below_one():
@@ -50,6 +69,17 @@ def test_settings_rejects_a_max_workflow_steps_below_one():
 def test_settings_rejects_a_max_retries_below_one():
     with pytest.raises(ValidationError):
         Settings(max_retries=0)
+
+
+def test_settings_rejects_invalid_agent_loop_limits():
+    with pytest.raises(ValidationError):
+        Settings(max_agent_iterations=0)
+    with pytest.raises(ValidationError):
+        Settings(max_tool_calls=0)
+    with pytest.raises(ValidationError):
+        Settings(max_identical_tool_call_count=0)
+    with pytest.raises(ValidationError):
+        Settings(max_correction_attempts=-1)
 
 
 def test_settings_accepts_valid_checkout_rules():
@@ -77,9 +107,50 @@ def test_settings_rejects_invalid_checkout_rules():
         Settings(checkout_currency="usd")
 
 
+def test_stripe_provider_requires_test_keys(monkeypatch):
+    monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
+    monkeypatch.delenv("STRIPE_PUBLISHABLE_KEY", raising=False)
+    with pytest.raises(ValidationError):
+        Settings(payment_provider="stripe_test", _env_file=None)
+    with pytest.raises(ValidationError):
+        Settings(
+            payment_provider="stripe_test",
+            stripe_secret_key="sk_live_not_allowed",
+            stripe_publishable_key="pk_test_ok",
+            _env_file=None,
+        )
+    with pytest.raises(ValidationError):
+        Settings(
+            payment_provider="stripe_test",
+            stripe_secret_key="sk_test_ok",
+            stripe_publishable_key="pk_live_not_allowed",
+            _env_file=None,
+        )
+
+
+def test_stripe_provider_accepts_test_keys():
+    settings = Settings(
+        payment_provider="stripe_test",
+        stripe_secret_key="sk_test_ok",
+        stripe_publishable_key="pk_test_ok",
+        stripe_webhook_secret="whsec_ok",
+    )
+
+    assert settings.payment_provider == "stripe_test"
+
+
 def test_settings_bounds_external_offer_limit():
     assert Settings(max_external_offers=3).max_external_offers == 3
     with pytest.raises(ValidationError):
         Settings(max_external_offers=0)
     with pytest.raises(ValidationError):
         Settings(max_external_offers=11)
+
+
+def test_settings_bounds_ollama_chat_temperature():
+    assert Settings(ollama_chat_temperature=0.0).ollama_chat_temperature == 0.0
+    assert Settings(ollama_chat_temperature=0.2).ollama_chat_temperature == 0.2
+    with pytest.raises(ValidationError):
+        Settings(ollama_chat_temperature=-0.01)
+    with pytest.raises(ValidationError):
+        Settings(ollama_chat_temperature=0.21)

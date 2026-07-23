@@ -27,3 +27,10 @@ def seeded_db_path(tmp_path) -> str:
     initialize_database(db_path)
     seed_database(db_path)
     return db_path
+
+
+@pytest.fixture(autouse=True)
+def _default_tests_to_rule_based_supervisor(monkeypatch):
+    """Keep tests deterministic; production/default Settings remain Ollama-backed."""
+    monkeypatch.setenv("SUPERVISOR_POLICY", "rule_based")
+    monkeypatch.setenv("PAYMENT_PROVIDER", "mock")

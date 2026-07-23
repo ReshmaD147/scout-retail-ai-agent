@@ -7,7 +7,7 @@ setting is needed, add it here first.
 """
 
 from functools import lru_cache
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     max_search_radius_miles: float = 100.0
     standard_delivery_min_days: int = 3
     standard_delivery_max_days: int = 5
-    max_workflow_steps: int = Field(default=25, ge=1)
+    max_workflow_steps: int = Field(default=50, ge=1)
     """Hard ceiling on Supervisor decisions per workflow (CLAUDE.md
     section 3: "Continue calling tools indefinitely" is explicitly
     disallowed). scout/orchestration/supervisor.py checks this before
@@ -35,7 +35,17 @@ class Settings(BaseSettings):
     """Hard ceiling on how many times the Supervisor may re-route to
     the same agent after an error before it must stop with
     workflow_status="failed" instead of retrying forever."""
-    max_correction_attempts: int = Field(default=2, ge=1)
+    max_agent_iterations: int = Field(default=8, ge=1)
+    """Hard ceiling on autonomous specialist/supervisor loop iterations
+    in one graph run. This bounds the Step 5 cyclic supervisor loop
+    separately from LangGraph's lower-level superstep count."""
+    max_tool_calls: int = Field(default=10, ge=1)
+    """Hard ceiling on read-only MCP/tool calls an autonomous workflow
+    may make before stopping safely."""
+    max_identical_tool_call_count: int = Field(default=1, ge=1)
+    """Hard ceiling for repeating the same tool call with the same
+    validated arguments in one autonomous workflow."""
+    max_correction_attempts: int = Field(default=1, ge=0)
     """Hard ceiling on how many times the Response Verification Agent
     (scout/agents/response_verification.py, Step 11) may send the
     workflow back through the pipeline for a fresh attempt after every
@@ -84,11 +94,21 @@ class Settings(BaseSettings):
     checkout_currency: str = Field(default="USD", pattern=r"^[A-Z]{3}$")
     """Currency code used by the deterministic checkout and mock payment
     adapter. Scout does not accept a client-supplied currency."""
+    payment_provider: Literal["mock", "stripe_test"] = "mock"
+    """Payment provider for deterministic checkout. Stripe mode is test-only."""
     mock_payment_provider: str = "mock"
     """Payment-provider label persisted for Step 16's local test-mode
     adapter. No real payment credential or card data is collected."""
+    stripe_secret_key: Optional[str] = None
+    """Stripe test secret key. Must start with sk_test_ when configured."""
+    stripe_publishable_key: Optional[str] = None
+    """Stripe test publishable key. Must start with pk_test_ when configured."""
+    stripe_webhook_secret: Optional[str] = None
+    """Stripe webhook signing secret for test-mode webhook verification."""
+    stripe_currency: str = Field(default="USD", pattern=r"^[A-Z]{3}$")
+    """Currency code sent to Stripe PaymentIntents."""
 
-    cors_allowed_origins: str = "http://localhost:5173"
+    cors_allowed_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     """Comma-separated list of browser origins allowed to call this API
     (scout/api/app.py, Step 14 - the React dev server at
     http://localhost:5173 by default). CLAUDE.md section 11 lists "CORS
@@ -131,12 +151,10 @@ class Settings(BaseSettings):
     `semantic_search_candidate_limit` products are available, without
     requiring a high, hard-to-calibrate score from the deterministic
     default embedding."""
-    supervisor_policy: Literal["rule_based", "ollama"] = "rule_based"
+    supervisor_policy: Literal["rule_based", "ollama"] = "ollama"
     """Which SupervisorPolicy scout/orchestration/graph.py wires into the
     compiled workflow (scout/orchestration/supervisor.py, Step 9-10).
-    "rule_based" (default) is the fully deterministic
-    RuleBasedSupervisorPolicy every existing test and the current demo
-    path depends on - it never calls a model. "ollama" switches to
+    "ollama" (default) switches to
     LangChainSupervisorPolicy (scout/orchestration/supervisor_policy.py)
     bound to a real local chat model served by Ollama (CLAUDE.md section
     2's approved local LLM runtime) at `ollama_base_url`, using
@@ -146,13 +164,18 @@ class Settings(BaseSettings):
     a fixed if/else tree. Mirrors `embedding_provider`'s existing
     hashing/ollama pattern exactly, including the same fail-safe spirit:
     a deterministic default that needs nothing installed, and a genuine
-    local-model alternative behind the same interface for when one is
-    available."""
+    local-model default with deterministic rule-based fallback when the
+    model is unavailable. "rule_based" forces the deterministic policy
+    without trying Ollama."""
     ollama_chat_model: str = "llama3.2"
     """Which locally-served Ollama chat model
     scout/orchestration/supervisor_policy.py's LangChainSupervisorPolicy
     binds to when supervisor_policy="ollama". Ignored entirely when
-    supervisor_policy="rule_based" (the default)."""
+    supervisor_policy="rule_based"."""
+    ollama_chat_temperature: float = Field(default=0.1, ge=0.0, le=0.2)
+    """Temperature for the local Ollama chat model used by the
+    Supervisor. Kept deliberately low so routing stays stable and
+    bounded while still allowing a real model-backed policy."""
     max_recommended_products: int = Field(default=3, ge=1)
     """Hard ceiling on how many verified products
     scout/agents/recommendation_agent.py's rerank_node ever hands to the
@@ -197,6 +220,11 @@ class Settings(BaseSettings):
             raise ValueError(
                 "standard_delivery_max_days must be >= standard_delivery_min_days"
             )
+        if self.payment_provider == "stripe_test":
+            if not self.stripe_secret_key or not self.stripe_secret_key.startswith("sk_test_"):
+                raise ValueError("STRIPE_SECRET_KEY must be a Stripe test secret key starting with sk_test_")
+            if not self.stripe_publishable_key or not self.stripe_publishable_key.startswith("pk_test_"):
+                raise ValueError("STRIPE_PUBLISHABLE_KEY must be a Stripe test publishable key starting with pk_test_")
         return self
 
     @property

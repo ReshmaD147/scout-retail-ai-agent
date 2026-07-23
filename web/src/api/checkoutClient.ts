@@ -1,6 +1,12 @@
 /** Thin Step 16 checkout HTTP client. All totals are server-calculated. */
 import { API_BASE_URL } from "./config";
-import type { CheckoutReview, OrderConfirmation, ShippingAddress } from "../types/checkout";
+import type {
+  CheckoutPaymentIntent,
+  CheckoutPaymentStatus,
+  CheckoutReview,
+  OrderConfirmation,
+  ShippingAddress,
+} from "../types/checkout";
 
 export class CheckoutRequestError extends Error {
   readonly status?: number;
@@ -74,4 +80,24 @@ export function confirmCheckout(
       payment_method_token: paymentMethodToken,
     }),
   });
+}
+
+export function createPaymentIntent(
+  checkoutId: string,
+  sessionId: string,
+  idempotencyKey: string
+): Promise<CheckoutPaymentIntent> {
+  return request<CheckoutPaymentIntent>(`/checkout/sessions/${encodeURIComponent(checkoutId)}/payment-intents`, {
+    method: "POST",
+    body: JSON.stringify({ session_id: sessionId, idempotency_key: idempotencyKey }),
+  });
+}
+
+export function getCheckoutPaymentStatus(
+  checkoutId: string,
+  sessionId: string
+): Promise<CheckoutPaymentStatus> {
+  return request<CheckoutPaymentStatus>(
+    `/checkout/sessions/${encodeURIComponent(checkoutId)}/payment-status?session_id=${encodeURIComponent(sessionId)}`
+  );
 }

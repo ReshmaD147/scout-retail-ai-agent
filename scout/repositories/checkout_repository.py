@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from scout.database.connection import connection_scope
+from scout.database.initialize import apply_lightweight_migrations
 from scout.repositories.models import (
     CheckoutSessionRecord,
     InventoryReservationRecord,
@@ -123,11 +124,26 @@ class IdempotencyLookup:
     order_id: Optional[str]
 
 
+@dataclass(frozen=True)
+class PaymentIntentSession:
+    checkout_id: str
+    session_id: str
+    payment_intent_id: str
+    payment_status: str
+    total: float
+    currency: str
+
+
 class CheckoutRepository:
     def __init__(self, db_path: Optional[str] = None) -> None:
         self._db_path = db_path
 
+    def _ensure_schema(self) -> None:
+        with connection_scope(self._db_path) as connection:
+            apply_lightweight_migrations(connection)
+
     def create_session(self, write: CheckoutSessionWrite) -> CheckoutSessionRecord:
+        self._ensure_schema()
         now = _now()
         with connection_scope(self._db_path) as connection:
             connection.execute(
@@ -137,8 +153,9 @@ class CheckoutRepository:
                     store_id, shipping_address_json, subtotal, discount_total,
                     merchandise_total, tax_total, shipping_total, total, currency,
                     review_hash, review_json, confirm_idempotency_key,
+                    payment_provider, payment_intent_id, payment_status,
                     created_at, updated_at, completed_at
-                ) VALUES (?, ?, ?, 'review', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)
+                ) VALUES (?, ?, ?, 'review', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, 'checkout_created', ?, ?, NULL)
                 """,
                 (
                     write.checkout_id,
@@ -171,6 +188,100 @@ class CheckoutRepository:
                 "SELECT * FROM checkout_sessions WHERE checkout_id = ?", (checkout_id,)
             ).fetchone()
         return CheckoutSessionRecord.from_row(row) if row is not None else None
+
+    def get_by_payment_intent(self, payment_intent_id: str) -> Optional[PaymentIntentSession]:
+        with connection_scope(self._db_path) as connection:
+            row = connection.execute(
+                """
+                SELECT checkout_id, session_id, payment_intent_id, payment_status, total, currency
+                FROM checkout_sessions
+                WHERE payment_intent_id = ?
+                """,
+                (payment_intent_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return PaymentIntentSession(**dict(row))
+
+    def attach_payment_intent(
+        self,
+        *,
+        checkout_id: str,
+        session_id: str,
+        provider: str,
+        payment_intent_id: str,
+        payment_status: str,
+        idempotency_key: str,
+    ) -> None:
+        now = _now()
+        with connection_scope(self._db_path) as connection:
+            updated = connection.execute(
+                """
+                UPDATE checkout_sessions
+                SET status = 'processing',
+                    payment_provider = ?,
+                    payment_intent_id = ?,
+                    payment_status = ?,
+                    confirm_idempotency_key = ?,
+                    updated_at = ?
+                WHERE checkout_id = ?
+                  AND session_id = ?
+                  AND status IN ('review', 'processing')
+                  AND (payment_intent_id IS NULL OR payment_intent_id = ?)
+                """,
+                (
+                    provider,
+                    payment_intent_id,
+                    payment_status,
+                    idempotency_key,
+                    now,
+                    checkout_id,
+                    session_id,
+                    payment_intent_id,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise CheckoutRepositoryConflict(
+                    "checkout_not_confirmable",
+                    "This checkout is not available for payment.",
+                )
+
+    def update_payment_status(self, checkout_id: str, payment_status: str) -> None:
+        with connection_scope(self._db_path) as connection:
+            connection.execute(
+                """
+                UPDATE checkout_sessions
+                SET payment_status = ?, updated_at = ?
+                WHERE checkout_id = ?
+                """,
+                (payment_status, _now(), checkout_id),
+            )
+
+    def has_processed_webhook_event(self, event_id: str) -> bool:
+        with connection_scope(self._db_path) as connection:
+            row = connection.execute(
+                "SELECT 1 FROM stripe_webhook_events WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+        return row is not None
+
+    def record_webhook_event(
+        self,
+        *,
+        event_id: str,
+        event_type: str,
+        checkout_id: Optional[str],
+        payment_intent_id: Optional[str],
+    ) -> None:
+        with connection_scope(self._db_path) as connection:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO stripe_webhook_events (
+                    event_id, event_type, checkout_id, payment_intent_id, processed_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (event_id, event_type, checkout_id, payment_intent_id, _now()),
+            )
 
     def find_idempotency(self, session_id: str, idempotency_key: str) -> Optional[IdempotencyLookup]:
         with connection_scope(self._db_path) as connection:
@@ -255,7 +366,7 @@ class CheckoutRepository:
                     raise CheckoutRepositoryConflict(
                         "checkout_not_found", "No checkout session was found for this customer session."
                     )
-                if session_row["status"] != "review":
+                if session_row["status"] not in {"review", "processing"}:
                     raise CheckoutRepositoryConflict(
                         "checkout_not_confirmable", "This checkout is no longer available for confirmation."
                     )
@@ -264,7 +375,7 @@ class CheckoutRepository:
                     """
                     UPDATE checkout_sessions
                     SET status = 'processing', confirm_idempotency_key = ?, updated_at = ?
-                    WHERE checkout_id = ? AND status = 'review'
+                    WHERE checkout_id = ? AND status IN ('review', 'processing')
                     """,
                     (plan.idempotency_key, now, plan.checkout_id),
                 )
@@ -416,7 +527,7 @@ class CheckoutRepository:
                 connection.execute(
                     """
                     UPDATE checkout_sessions
-                    SET status = 'completed', updated_at = ?, completed_at = ?
+                    SET status = 'completed', payment_status = 'order_created', updated_at = ?, completed_at = ?
                     WHERE checkout_id = ?
                     """,
                     (now, now, plan.checkout_id),

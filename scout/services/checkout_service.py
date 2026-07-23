@@ -36,7 +36,14 @@ from scout.repositories.promotion_repository import PromotionRepository
 from scout.repositories.store_repository import StoreRepository
 from scout.services import cart_service, promotion_service
 from scout.services.inventory_service import evaluate_availability
-from scout.services.payment_service import MockPaymentAdapter, PaymentServiceError
+from scout.services.payment_service import (
+    MockPaymentAdapter,
+    PaymentIntentResult,
+    PaymentResult,
+    PaymentServiceError,
+    WebhookEvent,
+    get_payment_provider,
+)
 
 _MONEY = Decimal("0.01")
 
@@ -123,7 +130,26 @@ class CheckoutReview(BaseModel):
     shipping_total: float
     total: float
     currency: str
+    payment_provider: str = "mock"
     warnings: List[str] = Field(default_factory=list)
+
+
+class CheckoutPaymentIntent(BaseModel):
+    checkout_id: str
+    session_id: str
+    status: str
+    provider: str
+    provider_reference: str
+    client_secret: str
+    publishable_key: str
+    amount: float
+    currency: str
+
+
+class CheckoutPaymentStatus(BaseModel):
+    checkout_id: str
+    status: str
+    order_id: Optional[str] = None
 
 
 class InventoryReservationSummary(BaseModel):
@@ -386,6 +412,7 @@ def _build_current_review(
         shipping_total=_as_float(shipping_total),
         total=_as_float(total),
         currency=settings.checkout_currency,
+        payment_provider=settings.payment_provider,
         warnings=list(cart.warnings),
     )
     return review, allocations, _review_hash(review)
@@ -517,6 +544,195 @@ def _build_order_confirmation(order_id: str, db_path: Optional[str]) -> OrderCon
     )
 
 
+def _build_commit_plan(
+    *,
+    checkout_id: str,
+    session_id: str,
+    idempotency_key: str,
+    payment_result: PaymentResult,
+    review: CheckoutReview,
+    allocations: List[_Allocation],
+) -> CheckoutCommitPlan:
+    order_id = str(uuid.uuid4())
+    payment_id = str(uuid.uuid4())
+    order_item_writes: List[OrderItemWrite] = []
+    item_id_by_product: Dict[str, str] = {}
+    for line in review.items:
+        order_item_id = str(uuid.uuid4())
+        item_id_by_product[line.product_id] = order_item_id
+        order_item_writes.append(
+            OrderItemWrite(
+                order_item_id=order_item_id,
+                product_id=line.product_id,
+                product_name=line.product_name,
+                brand=line.brand,
+                quantity=line.quantity,
+                catalog_unit_price=line.catalog_unit_price,
+                charged_unit_price=line.charged_unit_price,
+                line_subtotal=line.line_subtotal,
+                discount_total=line.discount_total,
+                line_total=line.line_total,
+                promotion_id=line.promotion_id,
+                promotion_label=line.promotion_label,
+            )
+        )
+
+    reservations = [
+        ReservationWrite(
+            reservation_id=str(uuid.uuid4()),
+            order_item_id=item_id_by_product[allocation.product_id],
+            product_id=allocation.product_id,
+            store_id=allocation.store_id,
+            quantity=allocation.quantity,
+        )
+        for allocation in allocations
+    ]
+
+    now = datetime.now(timezone.utc)
+    estimated_ready_at: Optional[str] = None
+    estimated_delivery_at: Optional[str] = None
+    settings = get_settings()
+    if review.fulfillment_type == "pickup":
+        estimated_ready_at = (now + timedelta(minutes=settings.order_pickup_ready_minutes)).isoformat()
+    else:
+        estimated_delivery_at = (
+            now + timedelta(days=settings.standard_delivery_max_days)
+        ).isoformat()
+
+    return CheckoutCommitPlan(
+        checkout_id=checkout_id,
+        session_id=session_id,
+        cart_id=review.cart_id,
+        idempotency_key=idempotency_key,
+        order_id=order_id,
+        payment=PaymentWrite(
+            payment_id=payment_id,
+            provider=payment_result.provider,
+            provider_reference=payment_result.provider_reference,
+            status=payment_result.status,
+            amount=payment_result.amount,
+            currency=payment_result.currency,
+        ),
+        fulfillment_type=review.fulfillment_type,
+        store_id=review.store_id,
+        shipping_address_json=(
+            json.dumps(review.shipping_address.model_dump(mode="json"), sort_keys=True)
+            if review.shipping_address is not None
+            else None
+        ),
+        subtotal=review.subtotal,
+        discount_total=review.discount_total,
+        merchandise_total=review.merchandise_total,
+        tax_total=review.tax_total,
+        shipping_total=review.shipping_total,
+        total=review.total,
+        currency=review.currency,
+        estimated_ready_at=estimated_ready_at,
+        estimated_delivery_at=estimated_delivery_at,
+        items=order_item_writes,
+        reservations=reservations,
+    )
+
+
+def _current_review_for_record(record, db_path: Optional[str]) -> Tuple[CheckoutReview, List[_Allocation], str]:
+    stored_review = CheckoutReview.model_validate_json(record.review_json)
+    return _build_current_review(
+        session_id=record.session_id,
+        checkout_id=record.checkout_id,
+        shipping_address=stored_review.shipping_address,
+        db_path=db_path,
+    )
+
+
+def create_checkout_payment_intent(
+    *,
+    checkout_id: str,
+    session_id: str,
+    idempotency_key: str,
+    db_path: Optional[str] = None,
+) -> CheckoutPaymentIntent:
+    """Create a Stripe test PaymentIntent from server-calculated checkout totals."""
+    settings = get_settings()
+    if settings.payment_provider != "stripe_test":
+        raise CheckoutServiceError("payment_provider_unavailable", "Stripe test payments are not enabled.")
+    if not checkout_id.strip() or not session_id.strip() or not idempotency_key.strip():
+        raise CheckoutServiceError("validation_error", "checkout_id, session_id, and idempotency_key are required.")
+
+    repo = CheckoutRepository(db_path)
+    record = repo.get_session(checkout_id.strip())
+    if record is None or record.session_id != session_id.strip():
+        raise CheckoutServiceError("checkout_not_found", "No checkout session was found for this customer session.")
+    if record.status == "completed":
+        order = repo.get_order_by_checkout(record.checkout_id)
+        return CheckoutPaymentIntent(
+            checkout_id=record.checkout_id,
+            session_id=record.session_id,
+            status="order_created",
+            provider=record.payment_provider or "stripe_test",
+            provider_reference=record.payment_intent_id or "",
+            client_secret="",
+            publishable_key=settings.stripe_publishable_key or "",
+            amount=record.total,
+            currency=record.currency,
+        )
+    if record.status not in {"review", "processing"}:
+        raise CheckoutServiceError("checkout_not_confirmable", "This checkout is not available for payment.")
+
+    current_review, _allocations, current_hash = _current_review_for_record(record, db_path)
+    if current_hash != record.review_hash:
+        raise CheckoutServiceError("checkout_changed", "The cart price, items, or fulfillment details changed. Create a new order review before paying.")
+    currency = settings.stripe_currency.upper()
+    if currency != current_review.currency.upper():
+        raise CheckoutServiceError("payment_currency_mismatch", "Stripe currency must match checkout currency.")
+
+    provider = get_payment_provider()
+    if not hasattr(provider, "create_payment_intent"):
+        raise CheckoutServiceError("payment_provider_unavailable", "The configured payment provider cannot create PaymentIntents.")
+    try:
+        result = provider.create_payment_intent(
+            checkout_id=record.checkout_id,
+            session_id=record.session_id,
+            amount=current_review.total,
+            currency=currency,
+            idempotency_key=idempotency_key.strip(),
+        )
+    except PaymentServiceError as exc:
+        raise CheckoutServiceError(exc.error_type, exc.message) from exc
+
+    repo.attach_payment_intent(
+        checkout_id=record.checkout_id,
+        session_id=record.session_id,
+        provider=result.provider,
+        payment_intent_id=result.provider_reference,
+        payment_status=result.status,
+        idempotency_key=idempotency_key.strip(),
+    )
+    return CheckoutPaymentIntent(
+        checkout_id=record.checkout_id,
+        session_id=record.session_id,
+        status=result.status,
+        provider=result.provider,
+        provider_reference=result.provider_reference,
+        client_secret=result.client_secret,
+        publishable_key=result.publishable_key,
+        amount=result.amount,
+        currency=result.currency,
+    )
+
+
+def get_checkout_payment_status(checkout_id: str, session_id: str, db_path: Optional[str] = None) -> CheckoutPaymentStatus:
+    repo = CheckoutRepository(db_path)
+    record = repo.get_session(checkout_id)
+    if record is None or record.session_id != session_id:
+        raise CheckoutServiceError("checkout_not_found", "No checkout session was found for this customer session.")
+    order = repo.get_order_by_checkout(checkout_id)
+    return CheckoutPaymentStatus(
+        checkout_id=checkout_id,
+        status=record.payment_status or "checkout_created",
+        order_id=order.order_id if order else None,
+    )
+
+
 def confirm_checkout(
     *,
     checkout_id: str,
@@ -527,6 +743,11 @@ def confirm_checkout(
     db_path: Optional[str] = None,
 ) -> OrderConfirmation:
     """Explicitly confirm payment, create an order, and reserve inventory."""
+    if get_settings().payment_provider == "stripe_test":
+        raise CheckoutServiceError(
+            "payment_provider_unavailable",
+            "Stripe checkout must be completed through PaymentIntent confirmation and webhook.",
+        )
     if not confirm_payment:
         raise CheckoutServiceError(
             "confirmation_required", "Explicit payment confirmation is required before placing the order."
@@ -568,21 +789,14 @@ def confirm_checkout(
             "checkout_not_confirmable", "This checkout is not available for confirmation."
         )
 
-    stored_review = CheckoutReview.model_validate_json(record.review_json)
-    current_review, allocations, current_hash = _build_current_review(
-        session_id=session_id,
-        checkout_id=checkout_id,
-        shipping_address=stored_review.shipping_address,
-        db_path=db_path,
-    )
+    current_review, allocations, current_hash = _current_review_for_record(record, db_path)
     if current_hash != record.review_hash:
         raise CheckoutServiceError(
             "checkout_changed",
             "The cart price, items, or fulfillment details changed. Create a new order review before paying.",
         )
 
-    settings = get_settings()
-    adapter = MockPaymentAdapter(settings.mock_payment_provider)
+    adapter = MockPaymentAdapter(get_settings().mock_payment_provider)
     try:
         payment_result = adapter.charge(
             checkout_id=checkout_id,
@@ -594,85 +808,13 @@ def confirm_checkout(
     except PaymentServiceError as exc:
         raise CheckoutServiceError(exc.error_type, exc.message) from exc
 
-    order_id = str(uuid.uuid4())
-    payment_id = str(uuid.uuid4())
-    order_item_writes: List[OrderItemWrite] = []
-    item_id_by_product: Dict[str, str] = {}
-    for line in current_review.items:
-        order_item_id = str(uuid.uuid4())
-        item_id_by_product[line.product_id] = order_item_id
-        order_item_writes.append(
-            OrderItemWrite(
-                order_item_id=order_item_id,
-                product_id=line.product_id,
-                product_name=line.product_name,
-                brand=line.brand,
-                quantity=line.quantity,
-                catalog_unit_price=line.catalog_unit_price,
-                charged_unit_price=line.charged_unit_price,
-                line_subtotal=line.line_subtotal,
-                discount_total=line.discount_total,
-                line_total=line.line_total,
-                promotion_id=line.promotion_id,
-                promotion_label=line.promotion_label,
-            )
-        )
-
-    reservation_writes = [
-        ReservationWrite(
-            reservation_id=str(uuid.uuid4()),
-            order_item_id=item_id_by_product[allocation.product_id],
-            product_id=allocation.product_id,
-            store_id=allocation.store_id,
-            quantity=allocation.quantity,
-        )
-        for allocation in allocations
-    ]
-
-    confirmed_at = datetime.now(timezone.utc)
-    estimated_ready_at = (
-        (confirmed_at + timedelta(minutes=settings.order_pickup_ready_minutes)).isoformat()
-        if current_review.fulfillment_type == "pickup"
-        else None
-    )
-    estimated_delivery_at = (
-        (confirmed_at + timedelta(days=settings.standard_delivery_max_days)).isoformat()
-        if current_review.fulfillment_type == "delivery"
-        else None
-    )
-
-    plan = CheckoutCommitPlan(
+    plan = _build_commit_plan(
         checkout_id=checkout_id,
         session_id=session_id,
-        cart_id=current_review.cart_id,
         idempotency_key=idempotency_key,
-        order_id=order_id,
-        payment=PaymentWrite(
-            payment_id=payment_id,
-            provider=payment_result.provider,
-            provider_reference=payment_result.provider_reference,
-            status=payment_result.status,
-            amount=payment_result.amount,
-            currency=payment_result.currency,
-        ),
-        fulfillment_type=current_review.fulfillment_type,
-        store_id=current_review.store_id,
-        shipping_address_json=(
-            json.dumps(current_review.shipping_address.model_dump(mode="json"), sort_keys=True)
-            if current_review.shipping_address is not None
-            else None
-        ),
-        subtotal=current_review.subtotal,
-        discount_total=current_review.discount_total,
-        merchandise_total=current_review.merchandise_total,
-        tax_total=current_review.tax_total,
-        shipping_total=current_review.shipping_total,
-        total=current_review.total,
-        currency=current_review.currency,
-        estimated_ready_at=estimated_ready_at,
-        estimated_delivery_at=estimated_delivery_at,
-        items=order_item_writes,
-        reservations=reservation_writes,
+        payment_result=payment_result,
+        review=current_review,
+        allocations=allocations,
     )
     try:
         repo.commit_checkout(plan)
@@ -691,4 +833,109 @@ def confirm_checkout(
             return _build_order_confirmation(prior_after_conflict.order_id, db_path)
         raise CheckoutServiceError(exc.error_type, exc.message) from exc
 
-    return _build_order_confirmation(order_id, db_path)
+    return _build_order_confirmation(plan.order_id, db_path)
+
+
+def complete_stripe_checkout_from_event(event: WebhookEvent, db_path: Optional[str] = None) -> CheckoutPaymentStatus:
+    """Finalize a Stripe checkout from a verified webhook event."""
+    repo = CheckoutRepository(db_path)
+    if not event.event_id:
+        raise CheckoutServiceError("invalid_webhook_event", "Stripe webhook event is missing an id.")
+    if repo.has_processed_webhook_event(event.event_id):
+        checkout_id = event.checkout_id or ""
+        if checkout_id:
+            return get_checkout_payment_status(checkout_id, event.session_id or "", db_path)
+        return CheckoutPaymentStatus(checkout_id="", status="already_processed", order_id=None)
+
+    if event.event_type in {"payment_intent.payment_failed", "payment_intent.canceled", "payment_intent.processing"}:
+        payment_status = {
+            "payment_intent.payment_failed": "payment_failed",
+            "payment_intent.canceled": "payment_canceled",
+            "payment_intent.processing": "payment_processing",
+        }[event.event_type]
+        checkout_id = event.checkout_id or ""
+        if checkout_id:
+            repo.update_payment_status(checkout_id, payment_status)
+        repo.record_webhook_event(
+            event_id=event.event_id,
+            event_type=event.event_type,
+            checkout_id=checkout_id or None,
+            payment_intent_id=event.payment_intent_id,
+        )
+        return CheckoutPaymentStatus(checkout_id=checkout_id, status=payment_status, order_id=None)
+
+    if event.event_type != "payment_intent.succeeded":
+        repo.record_webhook_event(
+            event_id=event.event_id,
+            event_type=event.event_type,
+            checkout_id=event.checkout_id,
+            payment_intent_id=event.payment_intent_id,
+        )
+        return CheckoutPaymentStatus(checkout_id=event.checkout_id or "", status="ignored", order_id=None)
+
+    if not event.payment_intent_id:
+        raise CheckoutServiceError("invalid_webhook_event", "Stripe webhook is missing a PaymentIntent id.")
+    payment_session = repo.get_by_payment_intent(event.payment_intent_id)
+    if payment_session is None:
+        raise CheckoutServiceError("checkout_not_found", "No checkout session matches this PaymentIntent.")
+    if event.checkout_id and event.checkout_id != payment_session.checkout_id:
+        raise CheckoutServiceError("payment_checkout_mismatch", "Stripe checkout metadata does not match Scout checkout.")
+    if event.session_id and event.session_id != payment_session.session_id:
+        raise CheckoutServiceError("payment_session_mismatch", "Stripe session metadata does not match Scout checkout.")
+    if event.amount is None or round(event.amount, 2) != round(payment_session.total, 2):
+        raise CheckoutServiceError("payment_amount_mismatch", "Stripe amount does not match Scout checkout total.")
+    if event.currency is None or event.currency.upper() != payment_session.currency.upper():
+        raise CheckoutServiceError("payment_currency_mismatch", "Stripe currency does not match Scout checkout currency.")
+
+    existing_order = repo.get_order_by_checkout(payment_session.checkout_id)
+    if existing_order is not None:
+        repo.record_webhook_event(
+            event_id=event.event_id,
+            event_type=event.event_type,
+            checkout_id=payment_session.checkout_id,
+            payment_intent_id=event.payment_intent_id,
+        )
+        return CheckoutPaymentStatus(
+            checkout_id=payment_session.checkout_id,
+            status="order_created",
+            order_id=existing_order.order_id,
+        )
+
+    record = repo.get_session(payment_session.checkout_id)
+    if record is None:
+        raise CheckoutServiceError("checkout_not_found", "No checkout session matches this PaymentIntent.")
+    current_review, allocations, current_hash = _current_review_for_record(record, db_path)
+    if current_hash != record.review_hash:
+        repo.update_payment_status(payment_session.checkout_id, "order_creation_failed")
+        raise CheckoutServiceError("checkout_changed", "The cart changed before order creation.")
+
+    plan = _build_commit_plan(
+        checkout_id=payment_session.checkout_id,
+        session_id=payment_session.session_id,
+        idempotency_key=record.confirm_idempotency_key or event.payment_intent_id,
+        payment_result=PaymentResult(
+            provider="stripe_test",
+            provider_reference=event.payment_intent_id,
+            status="succeeded",
+            amount=payment_session.total,
+            currency=payment_session.currency,
+        ),
+        review=current_review,
+        allocations=allocations,
+    )
+    try:
+        repo.commit_checkout(plan)
+    except CheckoutRepositoryConflict as exc:
+        repo.update_payment_status(payment_session.checkout_id, "order_creation_failed")
+        raise CheckoutServiceError(exc.error_type, exc.message) from exc
+    repo.record_webhook_event(
+        event_id=event.event_id,
+        event_type=event.event_type,
+        checkout_id=payment_session.checkout_id,
+        payment_intent_id=event.payment_intent_id,
+    )
+    return CheckoutPaymentStatus(
+        checkout_id=payment_session.checkout_id,
+        status="order_created",
+        order_id=plan.order_id,
+    )

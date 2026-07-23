@@ -77,3 +77,20 @@ class SupervisorDecision(BaseModel):
                     "clarification_question is required and must be non-empty when decision is 'clarification'"
                 )
         return self
+
+
+class SupervisorLoopDecision(BaseModel):
+    """Structured output for the cyclic Supervisor loop."""
+
+    next_agent: Literal[
+        "recommendation_agent",
+        "inventory_agent",
+        "external_offer_agent",
+        "order_agent",
+        "verification_agent",
+        "clarification",
+        "finish",
+        "safe_failure",
+    ]
+    reason: str = Field(min_length=1, max_length=300)
+    goal_complete: bool = False

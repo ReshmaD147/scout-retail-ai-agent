@@ -12,7 +12,7 @@ export interface ProductFiltersProps {
 const EMPTY_FILTERS: RecommendationFilters = { in_stock_only: true };
 
 export function ProductFilters({ value, disabled = false, onApply }: ProductFiltersProps): JSX.Element {
-  const { options, isLoading, errorMessage } = useCatalogFilters();
+  const { options, isLoading, errorMessage, retry } = useCatalogFilters();
   const [draft, setDraft] = useState<RecommendationFilters>({ ...EMPTY_FILTERS, ...value });
 
   useEffect(() => {
@@ -66,7 +66,12 @@ export function ProductFilters({ value, disabled = false, onApply }: ProductFilt
       <p className="filters-card__note">Filters re-run Scout&apos;s verified backend search; they do not hide cards only in the browser.</p>
 
       {isLoading && <p className="filters-card__status">Loading catalog filters…</p>}
-      {errorMessage && <p className="filters-card__status" role="status">{errorMessage}</p>}
+      {errorMessage && (
+        <div className="filters-card__status filters-card__status--error" role="alert">
+          <p>{errorMessage}</p>
+          <button type="button" onClick={retry} disabled={isLoading}>Retry</button>
+        </div>
+      )}
 
       <label>
         <span>Max price <strong>${selectedMax.toFixed(0)}</strong></span>
@@ -148,7 +153,7 @@ export function ProductFilters({ value, disabled = false, onApply }: ProductFilt
       <button
         type="button"
         className="filters-card__apply"
-        disabled={disabled || !hasChanges}
+        disabled={disabled || !options || !hasChanges}
         onClick={() => onApply({ ...draft, in_stock_only: true })}
       >
         Apply filters

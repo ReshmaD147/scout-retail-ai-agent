@@ -18,6 +18,7 @@ import { SearchBar } from "./components/SearchBar";
 import { Sidebar } from "./components/Sidebar";
 import { SuggestionChips } from "./components/SuggestionChips";
 import { TopActions } from "./components/TopActions";
+import { VerifiedFacts } from "./components/VerifiedFacts";
 import { SparklesIcon } from "./components/Icons";
 import { useCart } from "./hooks/useCart";
 import { useScoutChat } from "./hooks/useScoutChat";
@@ -31,8 +32,27 @@ const SUGGESTED_QUERIES = [
 ];
 
 const STARTER_QUERIES = [
-  "Find comfortable work shoes under $100 that I can pick up today near Maple Grove.",
+  "Work shoes under $100",
+  "Can I pick this up today near Maple Grove?",
   "Where is my order?",
+];
+
+const EMPTY_STATE_EXAMPLES = [
+  {
+    label: "Shop",
+    query: "Work shoes under $100",
+    description: "Find catalog products that match a budget.",
+  },
+  {
+    label: "Fulfillment",
+    query: "Can I pick this up today near Maple Grove?",
+    description: "Check verified pickup and delivery options.",
+  },
+  {
+    label: "Order help",
+    query: "Where is my order?",
+    description: "Retrieve order status from existing order data.",
+  },
 ];
 
 const DEFAULT_FILTERS: RecommendationFilters = { in_stock_only: true };
@@ -139,10 +159,8 @@ export function App(): JSX.Element {
         onDeals={() => runSearch("Show me products with active deals")}
         onCategories={() => { setIsHelpOpen(false); setActiveDialog("categories"); setIsNavOpen(false); }}
         onSaved={() => { setIsHelpOpen(false); setActiveDialog("saved"); setIsNavOpen(false); }}
-        showHelpCard={!currentOrder}
         onCartClick={() => setIsCartOpen(true)}
         onRecentSearch={runSearch}
-        onNeedHelp={() => { setActiveDialog(null); setIsHelpOpen(true); }}
       />
 
       <div className="app-shell__center">
@@ -168,7 +186,7 @@ export function App(): JSX.Element {
               <EmptyState
                 title="Describe what you need"
                 message="Scout will search the catalog, verify inventory, and show grounded options."
-                examples={STARTER_QUERIES}
+                examples={EMPTY_STATE_EXAMPLES}
                 onExampleSelect={runSearch}
               />
             )}
@@ -271,7 +289,11 @@ export function App(): JSX.Element {
           <button type="button" onClick={focusSearch}>Ask Scout</button>
         </section>
       )}
-
+      <div
+        className={`cart-drawer__backdrop${isCartOpen ? " cart-drawer__backdrop--visible" : ""}`}
+        onClick={() => setIsCartOpen(false)}
+        aria-hidden="true"
+      />
       <CartDrawer
         isOpen={isCartOpen}
         onClose={() => setIsCartOpen(false)}
@@ -350,6 +372,7 @@ function ResultView({
           {hasProducts ? (
             <>
               <ResultsHeader count={Math.min(response.products.length, 3)} explanationExpanded={explanationExpanded} onToggleExplanation={onToggleExplanation} />
+              <VerifiedFacts response={response} />
               {explanationExpanded && response.answer && (
                 <div className="result-view__answer" role="status">
                   <h2>Why Scout selected these</h2>

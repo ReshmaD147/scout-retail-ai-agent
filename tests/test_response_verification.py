@@ -23,10 +23,12 @@ from scout.agents.response_verification import (
     _verify_inventory_and_store_claim,
     _verify_promotion_claims,
     response_verification_node,
+    verify_proposed_claims,
 )
 from scout.mcp.schemas import ProductSummary
 from scout.orchestration.limits import SAFE_FAILURE_MESSAGE
 from scout.orchestration.state import EvidenceEntry, RetailGraphState
+from tests.order_helpers import create_pickup_order
 
 
 @pytest.fixture(autouse=True)
@@ -282,6 +284,151 @@ def test_promotion_check_fails_for_a_promotion_that_does_not_exist():
 
 
 # ---------------------------------------------------------------------------
+# verify_proposed_claims - structured customer-facing claim checks
+# ---------------------------------------------------------------------------
+
+
+def test_structured_claim_rejects_wrong_price():
+    state = _state(proposed_claims=[{"type": "product_price", "product_id": "FTW-004", "price": 1.23}])
+
+    report, issues = verify_proposed_claims(state)
+
+    assert report.verified is False
+    assert report.rejected_claims[0]["type"] == "product_price"
+    assert issues[0].step == "verify_claim_product_price"
+
+
+def test_structured_claim_rejects_invented_product():
+    state = _state(
+        proposed_claims=[
+            {"type": "product_identity", "product_id": "FTW-999", "product_name": "Ghost Shoe"}
+        ]
+    )
+
+    report, issues = verify_proposed_claims(state)
+
+    assert report.verified is False
+    assert report.rejected_claims[0]["type"] == "product_identity"
+    assert "catalog" in issues[0].message
+
+
+def test_structured_claim_rejects_false_promotion():
+    state = _state(
+        proposed_claims=[
+            {"type": "active_promotion", "product_id": "FTW-004", "promotion_id": "PRM-BOGUS"}
+        ]
+    )
+
+    report, issues = verify_proposed_claims(state)
+
+    assert report.verified is False
+    assert report.rejected_claims[0]["type"] == "active_promotion"
+    assert issues[0].step == "verify_claim_active_promotion"
+
+
+def test_structured_claim_rejects_false_inventory_quantity():
+    state = _state(
+        proposed_claims=[
+            {
+                "type": "store_inventory",
+                "product_id": "FTW-004",
+                "store_id": "STR-001",
+                "quantity": 999,
+            }
+        ]
+    )
+
+    report, issues = verify_proposed_claims(state)
+
+    assert report.verified is False
+    assert report.rejected_claims[0]["type"] == "store_inventory"
+    assert "quantity" in issues[0].message
+
+
+def test_structured_claim_rejects_incorrect_store():
+    state = _state(
+        proposed_claims=[
+            {
+                "type": "store_inventory",
+                "product_id": "FTW-004",
+                "store_id": "STR-999",
+                "quantity": 7,
+            }
+        ]
+    )
+
+    report, issues = verify_proposed_claims(state)
+
+    assert report.verified is False
+    assert report.rejected_claims[0]["type"] == "store_inventory"
+    assert "could not be reverified" in issues[0].message
+
+
+def test_structured_claim_rejects_unsupported_order_status(seeded_db_path):
+    created = create_pickup_order(seeded_db_path, "verify-order")
+    state = _state(
+        session_id="verify-order",
+        proposed_claims=[
+            {
+                "type": "order_status",
+                "order_id": created.order_id,
+                "order_status": "delivered",
+            }
+        ],
+    )
+
+    report, issues = verify_proposed_claims(state)
+
+    assert report.verified is False
+    assert report.rejected_claims[0]["type"] == "order_status"
+    assert issues[0].step == "verify_claim_order_status"
+
+
+def test_structured_claim_enforces_order_ownership(seeded_db_path):
+    created = create_pickup_order(seeded_db_path, "owner-session")
+    state = _state(
+        session_id="different-session",
+        proposed_claims=[
+            {
+                "type": "order_status",
+                "order_id": created.order_id,
+                "order_status": "confirmed",
+            }
+        ],
+    )
+
+    report, issues = verify_proposed_claims(state)
+
+    assert report.verified is False
+    assert report.rejected_claims[0]["type"] == "order_status"
+    assert "session" in issues[0].message
+
+
+def test_structured_claim_missing_order_identifier_is_recoverable():
+    state = _state(proposed_claims=[{"type": "eligibility", "eligibility_type": "cancellation", "eligible": True}])
+
+    report, issues = verify_proposed_claims(state)
+
+    assert report.verified is False
+    assert report.missing_evidence[0]["type"] == "eligibility"
+    assert issues[0].step == "verify_claim_eligibility"
+
+
+def test_rejected_structured_claim_never_reaches_final_response():
+    state = _state(
+        proposed_claims=[{"type": "product_price", "product_id": "FTW-004", "price": 1.23}],
+        final_response="ComfortPro Shift Support is only $1.23.",
+        correction_count=1,
+    )
+
+    update = response_verification_node(state)
+
+    assert update["workflow_status"] == "failed"
+    assert update["final_response"] == SAFE_FAILURE_MESSAGE
+    assert "$1.23" not in update["final_response"]
+
+
+# ---------------------------------------------------------------------------
 # _final_response_unsupported_claim - check 8
 # ---------------------------------------------------------------------------
 
@@ -334,13 +481,13 @@ def test_a_fully_grounded_candidate_produces_a_grounded_sentence():
         product_candidates=[_product()],
         intent={"max_price": 100.0},
         inventory_results=[
-            {
-                "product_id": "FTW-004",
-                "channel": "nearby_store",
-                "store_id": "STR-002",
-                "store_name": "Scout Demo Store - Plymouth",
-                "sellable_quantity": 7,
-            }
+                {
+                    "product_id": "FTW-004",
+                    "channel": "nearby_store",
+                    "store_id": "STR-002",
+                    "store_name": "Scout Demo Store - Plymouth",
+                    "sellable_quantity": 7,
+                }
         ],
         evidence=[_nearby_store_evidence()],
     )
@@ -391,10 +538,10 @@ def test_an_ungrounded_candidate_among_others_is_dropped_and_flagged():
         inventory_results=[
             {
                 "product_id": "FTW-004",
-                "channel": "selected_store",
-                "store_id": "STR-001",
-                "store_name": "Scout Demo Store - Maple Grove",
-                "sellable_quantity": 3,
+                "channel": "nearby_store",
+                "store_id": "STR-002",
+                "store_name": "Scout Demo Store - Plymouth",
+                "sellable_quantity": 7,
             },
             # A claim exists for the fake product too, so this test
             # exercises the catalog "not_found" check specifically -
@@ -408,7 +555,7 @@ def test_an_ungrounded_candidate_among_others_is_dropped_and_flagged():
             },
         ],
         evidence=[
-            _selected_store_evidence(quantity=3),
+            _nearby_store_evidence(quantity=7),
             EvidenceEntry(
                 source="check_store_inventory",
                 claim="Ghost Shoe (FTW-999) has 5 unit(s) available for pickup today at Scout Demo Store - Maple Grove",

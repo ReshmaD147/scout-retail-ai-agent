@@ -291,6 +291,9 @@ class CheckoutSessionRecord(BaseModel):
     review_hash: str
     review_json: str
     confirm_idempotency_key: Optional[str]
+    payment_provider: Optional[str] = None
+    payment_intent_id: Optional[str] = None
+    payment_status: Optional[str] = None
     created_at: str
     updated_at: str
     completed_at: Optional[str]
@@ -319,6 +322,9 @@ class CheckoutSessionRecord(BaseModel):
             review_hash=row["review_hash"],
             review_json=row["review_json"],
             confirm_idempotency_key=row["confirm_idempotency_key"],
+            payment_provider=row["payment_provider"],
+            payment_intent_id=row["payment_intent_id"],
+            payment_status=row["payment_status"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             completed_at=row["completed_at"],

@@ -1,7 +1,9 @@
 import { useState } from "react";
+import { STRIPE_TEST_CHECKOUT_ENABLED } from "../api/config";
 import type { UseCheckoutResult } from "../hooks/useCheckout";
 import type { CartView } from "../types/cart";
 import type { ShippingAddress } from "../types/checkout";
+import { StripePaymentSection } from "./StripePaymentSection";
 
 export interface CheckoutPanelProps {
   cart: CartView;
@@ -21,6 +23,8 @@ const EMPTY_ADDRESS: ShippingAddress = {
 export function CheckoutPanel({ cart, checkout }: CheckoutPanelProps): JSX.Element {
   const [address, setAddress] = useState<ShippingAddress>(EMPTY_ADDRESS);
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
+  const stripeCheckoutEnabled =
+    checkout.review?.payment_provider === "stripe_test" || STRIPE_TEST_CHECKOUT_ENABLED;
 
   if (checkout.confirmation) {
     return (
@@ -79,25 +83,33 @@ export function CheckoutPanel({ cart, checkout }: CheckoutPanelProps): JSX.Eleme
           <div className="checkout-summary__total"><dt>Total</dt><dd>${checkout.review.total.toFixed(2)}</dd></div>
         </dl>
 
-        <p className="checkout-panel__test-note">Payment method: mock payment in test mode.</p>
-        <label className="checkout-panel__confirmation">
-          <input
-            type="checkbox"
-            checked={paymentConfirmed}
-            onChange={(event) => setPaymentConfirmed(event.target.checked)}
-          />
-          I confirm this test payment and want to place the order.
-        </label>
+        {stripeCheckoutEnabled ? (
+          <StripePaymentSection checkout={checkout} />
+        ) : (
+          <>
+            <p className="checkout-panel__test-note">Payment method: mock payment in test mode.</p>
+            <label className="checkout-panel__confirmation">
+              <input
+                type="checkbox"
+                checked={paymentConfirmed}
+                onChange={(event) => setPaymentConfirmed(event.target.checked)}
+              />
+              I confirm this test payment and want to place the order.
+            </label>
+          </>
+        )}
 
         {checkout.errorMessage && <p className="checkout-panel__error" role="alert">{checkout.errorMessage}</p>}
-        <button
-          type="button"
-          className="checkout-panel__primary"
-          disabled={!paymentConfirmed || checkout.isLoading}
-          onClick={() => void checkout.confirm(paymentConfirmed)}
-        >
-          {checkout.isLoading ? "Placing order..." : `Place test order · $${checkout.review.total.toFixed(2)}`}
-        </button>
+        {!stripeCheckoutEnabled && (
+          <button
+            type="button"
+            className="checkout-panel__primary"
+            disabled={!paymentConfirmed || checkout.isLoading}
+            onClick={() => void checkout.confirm(paymentConfirmed)}
+          >
+            {checkout.isLoading ? "Placing order..." : `Place test order · $${checkout.review.total.toFixed(2)}`}
+          </button>
+        )}
       </section>
     );
   }

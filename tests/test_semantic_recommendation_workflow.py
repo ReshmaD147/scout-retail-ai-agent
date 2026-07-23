@@ -22,6 +22,8 @@ from scout.orchestration.graph import run_graph
 def _use_seeded_database(seeded_db_path, monkeypatch):
     get_settings.cache_clear()
     monkeypatch.setenv("DATABASE_PATH", seeded_db_path)
+    monkeypatch.setenv("MAX_AGENT_ITERATIONS", "20")
+    monkeypatch.setenv("MAX_TOOL_CALLS", "20")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

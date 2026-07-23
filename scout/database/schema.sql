@@ -201,6 +201,14 @@ CREATE TABLE IF NOT EXISTS checkout_sessions (
     review_hash              TEXT NOT NULL,
     review_json              TEXT NOT NULL,
     confirm_idempotency_key  TEXT,
+    payment_provider         TEXT,
+    payment_intent_id        TEXT,
+    payment_status           TEXT CHECK (payment_status IS NULL OR payment_status IN (
+                                 'checkout_created', 'payment_requires_action',
+                                 'payment_processing', 'payment_succeeded',
+                                 'payment_failed', 'payment_canceled',
+                                 'order_created', 'order_creation_failed'
+                               )),
     created_at               TEXT NOT NULL,
     updated_at               TEXT NOT NULL,
     completed_at             TEXT,
@@ -219,10 +227,18 @@ CREATE TABLE IF NOT EXISTS payments (
     checkout_id        TEXT NOT NULL UNIQUE REFERENCES checkout_sessions (checkout_id),
     provider           TEXT NOT NULL,
     provider_reference TEXT NOT NULL UNIQUE,
-    status             TEXT NOT NULL CHECK (status IN ('succeeded', 'failed')),
+    status             TEXT NOT NULL CHECK (status IN ('succeeded', 'failed', 'processing', 'canceled')),
     amount             REAL NOT NULL CHECK (amount >= 0),
     currency           TEXT NOT NULL,
     created_at         TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+    event_id           TEXT PRIMARY KEY,
+    event_type         TEXT NOT NULL,
+    checkout_id        TEXT,
+    payment_intent_id  TEXT,
+    processed_at       TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS orders (

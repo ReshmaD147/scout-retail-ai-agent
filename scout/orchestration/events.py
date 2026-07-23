@@ -25,26 +25,26 @@ from typing import Dict, List, Optional, Tuple
 from scout.orchestration.state import ToolCallTrace
 
 TOOL_LABELS: Dict[str, str] = {
-    "semantic_search_products": "Searching the product catalog",
-    "search_products": "Searching the product catalog",
-    "rank_products": "Ranking matching products",
-    "get_promotions": "Verifying active promotions",
-    "check_store_inventory": "Checking your selected store's inventory",
-    "availability_evaluation": "Comparing fulfillment options",
-    "find_nearby_inventory": "Searching nearby stores",
-    "check_network_inventory": "Checking network availability",
-    "get_delivery_estimate": "Estimating delivery options",
+    "semantic_search_products": "Recommendation Agent searching products",
+    "search_products": "Recommendation Agent searching products",
+    "rank_products": "Preparing response",
+    "get_promotions": "Verifying claims",
+    "check_store_inventory": "Inventory Agent checking selected store",
+    "availability_evaluation": "Preparing response",
+    "find_nearby_inventory": "Inventory Agent checking nearby stores",
+    "check_network_inventory": "Inventory Agent checking nearby stores",
+    "get_delivery_estimate": "Inventory Agent checking nearby stores",
     "find_available_substitutes": "Finding available substitutes",
-    "search_external_offers": "Searching external retailers",
-    "lookup_order": "Looking up your order",
-    "lookup_latest_order": "Looking up your latest order",
-    "get_order_status": "Checking order status",
-    "get_payment_status": "Checking payment status",
-    "get_fulfillment_details": "Checking fulfillment and tracking",
-    "check_order_eligibility": "Checking order eligibility",
-    "get_external_offer_details": "Verifying external retailer offers",
-    "get_product_details": "Verifying product details",
-    "response_verification": "Verifying product details",
+    "search_external_offers": "External Offer Agent searching alternatives",
+    "lookup_order": "Order Agent retrieving order evidence",
+    "lookup_latest_order": "Order Agent retrieving order evidence",
+    "get_order_status": "Order Agent retrieving order evidence",
+    "get_payment_status": "Order Agent retrieving order evidence",
+    "get_fulfillment_details": "Order Agent retrieving order evidence",
+    "check_order_eligibility": "Order Agent retrieving order evidence",
+    "get_external_offer_details": "Verifying claims",
+    "get_product_details": "Verifying claims",
+    "response_verification": "Verifying claims",
 }
 """tool_name -> customer-safe label. The single source of truth for
 "what does this tool call mean to a customer" - both scout/api/routes/
@@ -52,7 +52,8 @@ chat.py and scout/api/routes/chat_stream.py read this, instead of each
 keeping its own, possibly-drifting copy."""
 
 _NODE_TOOL_LABEL_OVERRIDES: Dict[Tuple[str, str], str] = {
-    ("reranking", "rank_products"): "Preparing your response",
+    ("reranking", "rank_products"): "Preparing response",
+    ("recommendation_agent", "rank_products"): "Recommendation Agent searching products",
 }
 """(node_name, tool_name) -> a label override, for the one tool that
 means something different depending on which node ran it:
@@ -62,11 +63,12 @@ fulfillment channel has already been checked (scout/agents/
 recommendation_agent.py)."""
 
 NEXT_AGENT_LABELS: Dict[str, str] = {
-    "recommendation": "Searching the product catalog",
-    "inventory": "Checking inventory",
-    "order": "Looking up your order",
-    "support": "Checking store policies",
-    "verification": "Verifying product details",
+    "recommendation": "Recommendation Agent searching products",
+    "inventory": "Inventory Agent checking selected store",
+    "order": "Order Agent retrieving order evidence",
+    "support": "External Offer Agent searching alternatives",
+    "external_offer_agent": "External Offer Agent searching alternatives",
+    "verification": "Verifying claims",
 }
 """The Supervisor's `next_agent` decision string (scout/orchestration/
 supervisor.py) -> a customer-safe label for the "agent_selected"
@@ -96,9 +98,7 @@ def label_for_store_inventory_check(location_text: Optional[str]) -> str:
     "Checking Maple Grove inventory" - one of Step 13's own required
     example labels) - falling back to a generic, still-safe phrase when
     no location text was extracted."""
-    if location_text:
-        return f"Checking {location_text} inventory"
-    return "Checking your selected store's inventory"
+    return "Inventory Agent checking selected store"
 
 
 def activity_labels_for_tool_results(tool_results: List[ToolCallTrace]) -> List[str]:

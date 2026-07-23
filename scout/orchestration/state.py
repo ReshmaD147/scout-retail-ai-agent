@@ -115,13 +115,15 @@ Which data should not be placed in state
 """
 
 import operator
+from datetime import datetime, timezone
 from typing import Annotated, Any, Dict, List, Literal, Optional
 
 from langchain_core.messages import BaseMessage
 from langgraph.graph.message import add_messages
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from scout.mcp.schemas import ExternalOfferSummary, ProductSummary
+from scout.services.intent_service import StructuredIntent
 
 # ---------------------------------------------------------------------------
 # Sub-models
@@ -180,6 +182,33 @@ class ToolCallTrace(BaseModel):
     summary: str = Field(min_length=1)
     """A short, safe description of the result (e.g. "found 3 stores
     within 25 miles"), not raw output and not chain-of-thought."""
+    validated_arguments: Dict[str, Any] = Field(default_factory=dict)
+    """Validated tool arguments when available. Used for duplicate-call
+    limits; never stores secrets, prompts, SQL, or raw payloads."""
+
+
+class ToolHistoryRecord(BaseModel):
+    """One complete, customer-safe tool invocation record.
+
+    This is richer than ToolCallTrace but follows the same safety rule:
+    record validated arguments and short outcomes, never hidden
+    chain-of-thought, prompts, SQL, secrets, or raw stack traces.
+    """
+
+    agent_name: str = Field(min_length=1)
+    tool_name: str = Field(min_length=1)
+    validated_arguments: Dict[str, Any] = Field(default_factory=dict)
+    success: bool
+    evidence_id: Optional[str] = None
+    sequence_number: int = Field(ge=1)
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    error: Optional[str] = None
+
+    @field_validator("timestamp")
+    @classmethod
+    def _timestamp_must_be_iso_datetime(cls, value: str) -> str:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return value
 
 
 class WorkflowError(BaseModel):
@@ -289,6 +318,9 @@ class RetailGraphState(BaseModel):
     product-type, price, attribute, stock, and fulfillment fields into
     `intent`; specialist agents never read raw HTTP payloads.
     """
+    original_user_query: Optional[str] = None
+    """The untouched customer utterance. Defaults to customer_query for
+    backward compatibility with the current API state builder."""
 
     # -- Interpretation and planning ------------------------------------
     intent: Optional[Dict[str, Any]] = None
@@ -296,10 +328,20 @@ class RetailGraphState(BaseModel):
     on). Kept as a generic dict here deliberately: the Recommendation
     Agent (Phase 5) owns the actual intent schema, and this
     orchestration layer should not guess it prematurely."""
+    structured_intent: Optional[StructuredIntent] = None
+    """The normalized LLM/deterministic intent object. It supplements
+    the legacy intent dict rather than replacing it, so existing graph
+    code can continue to read intent["category"], intent["max_price"],
+    and related fields."""
+    intent_extraction_source: Optional[Literal["llm", "retry", "deterministic_fallback"]] = None
+    """How structured intent was extracted for this workflow."""
     goal: Optional[str] = None
     """A short statement of what this workflow is trying to accomplish,
     set by the Supervisor (e.g. "find and confirm fulfillment for
     comfortable work shoes under $100")."""
+    customer_goal: Optional[str] = None
+    concise_decision_reason: Optional[str] = None
+    """Short decision summary only, never hidden chain-of-thought."""
     plan: List[PlanStep] = Field(default_factory=list)
     """The Supervisor's current plan. Replaced wholesale when the
     Supervisor (re)plans - not accumulated, since a stale plan must not
@@ -315,9 +357,14 @@ class RetailGraphState(BaseModel):
     # -- Routing ----------------------------------------------------------
     active_agent: Optional[str] = None
     """The specialist agent currently executing."""
+    current_agent: Optional[str] = None
+    """New name for active_agent. Kept separate for compatibility while
+    callers migrate."""
     next_agent: Optional[str] = None
     """The Supervisor's routing decision for the next node. None (or
     "none") means the workflow should stop."""
+    supervisor_decision_source: Optional[Literal["ollama", "retry", "rule_based_fallback"]] = None
+    """How the latest Supervisor decision was produced."""
 
     # -- Domain results ----------------------------------------------------
     product_candidates: List[ProductSummary] = Field(default_factory=list)
@@ -326,6 +373,9 @@ class RetailGraphState(BaseModel):
     instead of an untyped dict, since that type already exists.
     Replaced (not appended) each time the agent filters or re-ranks -
     an old, invalidated candidate must not linger."""
+    candidate_products: List[ProductSummary] = Field(default_factory=list)
+    """New name for product_candidates."""
+    selected_products: List[ProductSummary] = Field(default_factory=list)
     external_offers: List[ExternalOfferSummary] = Field(default_factory=list)
     """Verified mock merchant offers returned only when every internal
     fulfillment channel has been exhausted. Replaced wholesale on each
@@ -336,8 +386,11 @@ class RetailGraphState(BaseModel):
     this workflow (see scout/mcp/inventory_tools.py *Result schemas).
     Left as dicts for now - Phase 10 will settle on a single typed
     shape once the multi-agent workflow using it is actually built."""
+    fulfillment_options: List[Dict[str, Any]] = Field(default_factory=list)
+    """New name for verified fulfillment evidence/options."""
     order_context: Optional[Dict[str, Any]] = None
     """Verified read-only order status payload produced by the Step 17 Order Agent."""
+    order_evidence: List[Dict[str, Any]] = Field(default_factory=list)
     policy_results: List[Dict[str, Any]] = Field(default_factory=list)
     """Reserved for the Support Agent (Phase 16, not yet built)."""
 
@@ -345,6 +398,9 @@ class RetailGraphState(BaseModel):
     tool_results: Annotated[List[ToolCallTrace], operator.add] = Field(default_factory=list)
     """Every tool call made this workflow, safe-summarized. Append-only
     - see module docstring."""
+    tool_history: Annotated[List[ToolHistoryRecord], operator.add] = Field(default_factory=list)
+    """Detailed append-only tool history with validated arguments and
+    sequence numbers."""
     evidence: Annotated[List[EvidenceEntry], operator.add] = Field(default_factory=list)
     """Every grounded fact collected this workflow. Append-only - see
     module docstring."""
@@ -352,10 +408,14 @@ class RetailGraphState(BaseModel):
     """Every error encountered this workflow. Append-only - see module
     docstring. Used by the Supervisor to decide whether to replan,
     retry, or stop."""
+    proposed_claims: List[Dict[str, Any]] = Field(default_factory=list)
+    verification_result: Optional[Dict[str, Any]] = None
 
     # -- Limits and control -------------------------------------------------
     retry_count: int = Field(default=0, ge=0)
     step_count: int = Field(default=0, ge=0)
+    iteration_count: Annotated[int, operator.add] = Field(default=0, ge=0)
+    tool_call_count: Annotated[int, operator.add] = Field(default=0, ge=0)
     correction_count: int = Field(default=0, ge=0)
     """How many times the Response Verification Agent (Step 11) has
     sent the workflow back through the pipeline for a fresh attempt
@@ -365,7 +425,9 @@ class RetailGraphState(BaseModel):
     counts a different kind of retry: not "the Supervisor chose the
     same agent again," but "the Verifier rejected every candidate and
     asked for a fresh pass." See scout/agents/response_verification.py."""
+    repeated_call_counts: Dict[str, int] = Field(default_factory=dict)
     pending_confirmation: Optional[PendingConfirmation] = None
+    workflow_started_at: Optional[str] = None
 
     # -- Outcome --------------------------------------------------------------
     workflow_status: Literal[
@@ -388,3 +450,56 @@ class RetailGraphState(BaseModel):
     clarifying question when workflow_status is "awaiting_clarification".
     Only set once the workflow reaches a terminal or paused-for-input
     status."""
+    stop_reason: Optional[str] = None
+
+    @field_validator("concise_decision_reason")
+    @classmethod
+    def _decision_reason_must_be_short(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and len(value) > 300:
+            raise ValueError("concise_decision_reason must be 300 characters or fewer")
+        return value
+
+    @field_validator("workflow_started_at")
+    @classmethod
+    def _workflow_started_at_must_be_iso_datetime(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return value
+
+    @field_validator("repeated_call_counts")
+    @classmethod
+    def _repeated_call_counts_must_be_non_negative(cls, value: Dict[str, int]) -> Dict[str, int]:
+        if any(count < 0 for count in value.values()):
+            raise ValueError("repeated_call_counts values must be non-negative")
+        return value
+
+    @model_validator(mode="after")
+    def _populate_compatibility_fields(self) -> "RetailGraphState":
+        if self.original_user_query is None:
+            self.original_user_query = self.customer_query
+        if self.structured_intent is None and self.intent and self.intent.get("structured_intent"):
+            self.structured_intent = StructuredIntent.model_validate(self.intent["structured_intent"])
+        if self.intent_extraction_source is None and self.intent and self.intent.get("extraction_source"):
+            self.intent_extraction_source = self.intent["extraction_source"]
+        if self.customer_goal is None:
+            self.customer_goal = self.goal
+        if self.current_agent is None:
+            self.current_agent = self.active_agent
+        if not self.candidate_products and self.product_candidates:
+            self.candidate_products = list(self.product_candidates)
+        if not self.fulfillment_options and self.inventory_results:
+            self.fulfillment_options = list(self.inventory_results)
+        if not self.order_evidence and self.order_context:
+            self.order_evidence = [self.order_context]
+        if self.workflow_status == "completed" and len(self.product_candidates) > 3:
+            seen = set()
+            deduped_reversed = []
+            for product in reversed(self.product_candidates):
+                if product.product_id in seen:
+                    continue
+                seen.add(product.product_id)
+                deduped_reversed.append(product)
+            self.product_candidates = list(reversed(deduped_reversed))[-3:]
+        if self.tool_call_count == 0 and self.tool_history:
+            self.tool_call_count = len(self.tool_history)
+        return self

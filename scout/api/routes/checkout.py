@@ -1,16 +1,20 @@
-"""Thin REST routes for Step 16 checkout and order confirmation."""
+"""Thin REST routes for checkout, payment, and order confirmation."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header, Request
 
 from scout.api.exceptions import ScoutAppError
 from scout.api.schemas.checkout import (
+    CheckoutPaymentIntent,
+    CheckoutPaymentStatus,
     CheckoutReview,
     ConfirmCheckoutRequest,
     CreateCheckoutSessionRequest,
+    CreatePaymentIntentRequest,
     OrderConfirmation,
 )
 from scout.services import checkout_service
 from scout.services.checkout_service import CheckoutServiceError
+from scout.services.payment_service import PaymentServiceError, get_payment_provider
 
 router = APIRouter(prefix="/checkout", tags=["checkout"])
 
@@ -38,6 +42,16 @@ _ERROR_STATUS_CODES = {
     "idempotency_conflict": 409,
     "payment_declined": 402,
     "invalid_payment_method": 400,
+    "payment_provider_unavailable": 400,
+    "stripe_configuration_error": 500,
+    "stripe_unavailable": 500,
+    "payment_intent_failed": 502,
+    "invalid_webhook_signature": 400,
+    "invalid_webhook_event": 400,
+    "payment_amount_mismatch": 409,
+    "payment_currency_mismatch": 409,
+    "payment_checkout_mismatch": 409,
+    "payment_session_mismatch": 409,
     "order_not_found": 404,
     "checkout_persistence_conflict": 409,
 }
@@ -79,5 +93,43 @@ def confirm_checkout(checkout_id: str, request: ConfirmCheckoutRequest) -> Order
             confirm_payment=request.confirm_payment,
             payment_method_token=request.payment_method_token,
         )
+    except CheckoutServiceError as exc:
+        raise _as_app_error(exc) from exc
+
+
+@router.post("/sessions/{checkout_id}/payment-intents", response_model=CheckoutPaymentIntent)
+def create_payment_intent(checkout_id: str, request: CreatePaymentIntentRequest) -> CheckoutPaymentIntent:
+    try:
+        return checkout_service.create_checkout_payment_intent(
+            checkout_id=checkout_id,
+            session_id=request.session_id,
+            idempotency_key=request.idempotency_key,
+        )
+    except CheckoutServiceError as exc:
+        raise _as_app_error(exc) from exc
+
+
+@router.get("/sessions/{checkout_id}/payment-status", response_model=CheckoutPaymentStatus)
+def checkout_payment_status(checkout_id: str, session_id: str) -> CheckoutPaymentStatus:
+    try:
+        return checkout_service.get_checkout_payment_status(checkout_id, session_id)
+    except CheckoutServiceError as exc:
+        raise _as_app_error(exc) from exc
+
+
+@router.post("/stripe/webhook", response_model=CheckoutPaymentStatus)
+async def stripe_webhook(
+    request: Request,
+    stripe_signature: str | None = Header(default=None, alias="stripe-signature"),
+) -> CheckoutPaymentStatus:
+    payload = await request.body()
+    try:
+        provider = get_payment_provider()
+        if not hasattr(provider, "verify_webhook"):
+            raise CheckoutServiceError("payment_provider_unavailable", "Stripe test payments are not enabled.")
+        event = provider.verify_webhook(payload, stripe_signature)
+        return checkout_service.complete_stripe_checkout_from_event(event)
+    except PaymentServiceError as exc:
+        raise _as_app_error(CheckoutServiceError(exc.error_type, exc.message)) from exc
     except CheckoutServiceError as exc:
         raise _as_app_error(exc) from exc

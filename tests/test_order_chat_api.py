@@ -40,7 +40,7 @@ def test_chat_returns_verified_order_status(client, _use_seeded_database):
     assert body["status"] == "completed"
     assert body["order"]["order_id"] == created.order_id
     assert body["products"] == []
-    assert "Looking up your latest order" in body["activity_events"]
+    assert "Order Agent retrieving order evidence" in body["activity_events"]
 
 
 def test_chat_can_lookup_an_explicit_order_id(client, _use_seeded_database):
@@ -64,4 +64,4 @@ def test_stream_final_response_contains_order_status(client, _use_seeded_databas
     final = next(data for event, data in events if event == "final_response")
     assert final["data"]["order"]["order_id"] == created.order_id
     labels = {data["label"] for _event, data in events}
-    assert "Looking up your latest order" in labels
+    assert "Order Agent retrieving order evidence" in labels

@@ -185,25 +185,25 @@ def test_events_contain_workflow_id_and_session_id(client):
 def test_product_search_emits_a_safe_catalog_search_event(client):
     _, _, events = _stream_and_collect(client, {"session_id": "s-catalog", "message": ACCEPTANCE_QUERY})
     labels = {event["data"]["label"] for event in events}
-    assert "Searching the product catalog" in labels
+    assert "Recommendation Agent searching products" in labels
 
 
 def test_pickup_request_emits_an_inventory_check_event(client):
     _, _, events = _stream_and_collect(client, {"session_id": "s-pickup", "message": ACCEPTANCE_QUERY})
     labels = {event["data"]["label"] for event in events}
-    assert "Checking Maple Grove inventory" in labels
+    assert "Inventory Agent checking selected store" in labels
 
 
 def test_nearby_fallback_emits_a_nearby_store_event(client):
     _, _, events = _stream_and_collect(client, {"session_id": "s-nearby", "message": ACCEPTANCE_QUERY})
     labels = {event["data"]["label"] for event in events}
-    assert "Searching nearby stores" in labels
+    assert "Inventory Agent checking nearby stores" in labels
 
 
 def test_verification_emits_verification_events(client):
     _, _, events = _stream_and_collect(client, {"session_id": "s-verify", "message": ACCEPTANCE_QUERY})
-    assert _find(events, "verification_started") is not None
-    assert _find(events, "verification_completed") is not None
+    labels = {event["data"]["label"] for event in events}
+    assert "Verifying claims" in labels
 
 
 def test_final_response_event_contains_verified_output(client):
@@ -213,6 +213,30 @@ def test_final_response_event_contains_verified_output(client):
     payload = final_event["data"]["data"]
     assert payload["status"] == "completed"
     assert [p["product_id"] for p in payload["products"]] == ["FTW-004"]
+    assert final_event["data"]["label"] == "Completed"
+
+
+def test_stream_activity_labels_are_canonical_and_not_duplicated(client):
+    _, _, events = _stream_and_collect(client, {"session_id": "s-canonical", "message": ACCEPTANCE_QUERY})
+    activity_labels = [
+        event["data"]["label"]
+        for event in events
+        if event["event"] in {"workflow_started", "agent_selected", "tool_started", "verification_started"}
+    ]
+    allowed = {
+        "Understanding request",
+        "Recommendation Agent searching products",
+        "Inventory Agent checking selected store",
+        "Inventory Agent checking nearby stores",
+        "External Offer Agent searching alternatives",
+        "Order Agent retrieving order evidence",
+        "Verifying claims",
+        "Preparing response",
+        "Completed",
+        "Stopped safely",
+    }
+    assert set(activity_labels) <= allowed
+    assert len(activity_labels) == len(set(activity_labels))
 
 
 def test_stream_ends_with_stream_closed(client):

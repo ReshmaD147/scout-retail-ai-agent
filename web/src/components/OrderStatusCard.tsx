@@ -10,7 +10,7 @@ import {
   PackageIcon,
   StoreIcon,
 } from "./Icons";
-import { PRODUCT_IMAGE_PLACEHOLDER, getProductImageSrc } from "./ProductCard";
+import { getProductImageSrc } from "./ProductCard";
 
 export interface OrderStatusCardProps {
   order: OrderStatusView;

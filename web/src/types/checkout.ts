@@ -43,7 +43,26 @@ export interface CheckoutReview {
   shipping_total: number;
   total: number;
   currency: string;
+  payment_provider?: "mock" | "stripe_test";
   warnings: string[];
+}
+
+export interface CheckoutPaymentIntent {
+  checkout_id: string;
+  session_id: string;
+  status: string;
+  provider: string;
+  provider_reference: string;
+  client_secret: string;
+  publishable_key: string;
+  amount: number;
+  currency: string;
+}
+
+export interface CheckoutPaymentStatus {
+  checkout_id: string;
+  status: string;
+  order_id: string | null;
 }
 
 export interface InventoryReservationSummary {

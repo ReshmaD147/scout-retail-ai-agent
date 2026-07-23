@@ -1,10 +1,9 @@
-import { CartIcon, CloseIcon, GridIcon, HeartIcon, HomeIcon, MessageIcon, SearchIcon, SparklesIcon, TagIcon } from "./Icons";
+import { CartIcon, CloseIcon, GridIcon, HeartIcon, HomeIcon, SearchIcon, SparklesIcon, TagIcon } from "./Icons";
 
 export interface SidebarProps {
   itemCount: number;
   recentSearches: string[];
   isOpen: boolean;
-  showHelpCard?: boolean;
   onClose: () => void;
   onNewSearch: () => void;
   onDeals: () => void;
@@ -12,14 +11,12 @@ export interface SidebarProps {
   onSaved: () => void;
   onCartClick: () => void;
   onRecentSearch: (query: string) => void;
-  onNeedHelp: () => void;
 }
 
 export function Sidebar({
   itemCount,
   recentSearches,
   isOpen,
-  showHelpCard = true,
   onClose,
   onNewSearch,
   onDeals,
@@ -27,7 +24,6 @@ export function Sidebar({
   onSaved,
   onCartClick,
   onRecentSearch,
-  onNeedHelp,
 }: SidebarProps): JSX.Element {
   return (
     <aside className={`sidebar${isOpen ? " sidebar--open" : ""}`} aria-label="Primary navigation">
@@ -82,15 +78,6 @@ export function Sidebar({
           </ul>
         )}
       </section>
-
-      {showHelpCard && (
-        <section className="sidebar__help-card" aria-label="Need help">
-          <span className="sidebar__help-sparkle"><SparklesIcon /></span>
-          <h2>Need help?</h2>
-          <p>Ask Scout about products, availability, cart, checkout, or order status.</p>
-          <button type="button" onClick={onNeedHelp}><MessageIcon /> Chat with Scout</button>
-        </section>
-      )}
     </aside>
   );
 }

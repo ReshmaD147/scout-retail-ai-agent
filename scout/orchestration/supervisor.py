@@ -73,6 +73,7 @@ def supervisor_node(state: RetailGraphState, policy: SupervisorPolicy) -> Dict[s
         return {
             "workflow_status": "stopped_at_limit",
             "next_agent": None,
+            "stop_reason": "workflow_step_limit",
             "errors": [
                 WorkflowError(
                     error_type="workflow_limit_reached",
@@ -81,6 +82,83 @@ def supervisor_node(state: RetailGraphState, policy: SupervisorPolicy) -> Dict[s
                 )
             ],
             "final_response": SAFE_FAILURE_MESSAGE,
+        }
+
+    if state.iteration_count >= settings.max_agent_iterations:
+        if state.product_candidates or state.external_offers:
+            return {
+                "step_count": state.step_count + 1,
+                "active_agent": "supervisor",
+                "current_agent": "supervisor",
+                "next_agent": "verification_agent",
+                "concise_decision_reason": "A workflow limit was reached; verifying available evidence before responding.",
+                "workflow_status": "in_progress",
+                "tool_results": [
+                    ToolCallTrace(
+                        tool_name="supervisor_decision",
+                        status="success",
+                        summary="workflow limit reached; routing usable evidence to verification",
+                    )
+                ],
+            }
+        return {
+            "workflow_status": "stopped_at_limit",
+            "next_agent": None,
+            "stop_reason": "agent_iteration_limit",
+            "errors": [
+                WorkflowError(
+                    error_type="workflow_limit_reached",
+                    message="Maximum agent iterations reached before the goal was completed.",
+                    agent="supervisor",
+                )
+            ],
+            "final_response": state.final_response or SAFE_FAILURE_MESSAGE,
+        }
+
+    if state.tool_call_count >= settings.max_tool_calls:
+        if state.product_candidates or state.external_offers:
+            return {
+                "step_count": state.step_count + 1,
+                "active_agent": "supervisor",
+                "current_agent": "supervisor",
+                "next_agent": "verification_agent",
+                "concise_decision_reason": "A tool-call limit was reached; verifying available evidence before responding.",
+                "workflow_status": "in_progress",
+                "tool_results": [
+                    ToolCallTrace(
+                        tool_name="supervisor_decision",
+                        status="success",
+                        summary="tool-call limit reached; routing usable evidence to verification",
+                    )
+                ],
+            }
+        return {
+            "workflow_status": "stopped_at_limit",
+            "next_agent": None,
+            "stop_reason": "tool_call_limit",
+            "errors": [
+                WorkflowError(
+                    error_type="workflow_limit_reached",
+                    message="Maximum tool calls reached before the goal was completed.",
+                    agent="supervisor",
+                )
+            ],
+            "final_response": state.final_response or SAFE_FAILURE_MESSAGE,
+        }
+
+    if any(count > settings.max_identical_tool_call_count for count in state.repeated_call_counts.values()):
+        return {
+            "workflow_status": "stopped_at_limit",
+            "next_agent": None,
+            "stop_reason": "repeated_tool_call_limit",
+            "errors": [
+                WorkflowError(
+                    error_type="workflow_limit_reached",
+                    message="Repeated tool-call limit reached before the goal was completed.",
+                    agent="supervisor",
+                )
+            ],
+            "final_response": state.final_response or SAFE_FAILURE_MESSAGE,
         }
 
     if state.retry_count >= settings.max_retries:
@@ -98,20 +176,29 @@ def supervisor_node(state: RetailGraphState, policy: SupervisorPolicy) -> Dict[s
         }
 
     decision = policy.decide(state)
+    decision_source = getattr(policy, "last_decision_source", "rule_based_fallback")
 
     # A "retry" is the Supervisor routing to the same agent it just
     # routed to last turn (i.e. the previous attempt did not resolve
     # things) - moving on to a different agent, or a control decision
     # like "finish", is forward progress and resets the retry budget.
-    is_retry = decision.decision == state.next_agent and decision.decision not in _NON_RETRYABLE_DECISIONS
+    is_retry = (
+        decision.decision == state.next_agent
+        and decision.decision not in _NON_RETRYABLE_DECISIONS
+        and decision.decision not in {"recommendation", "inventory", "order", "support", "verification"}
+    )
     new_retry_count = state.retry_count + 1 if is_retry else 0
 
     update: Dict[str, Any] = {
         "step_count": state.step_count + 1,
         "retry_count": new_retry_count,
         "goal": decision.goal,
+        "customer_goal": decision.goal,
         "active_agent": "supervisor",
+        "current_agent": "supervisor",
         "next_agent": decision.decision,
+        "supervisor_decision_source": decision_source,
+        "concise_decision_reason": decision.decision_summary,
         "workflow_status": "in_progress",
         "tool_results": [
             ToolCallTrace(
@@ -141,7 +228,7 @@ def supervisor_node(state: RetailGraphState, policy: SupervisorPolicy) -> Dict[s
         # (see SupervisorDecision), so it is a reasonable stand-in
         # final_response until that agent exists to construct one from
         # verified evidence.
-        update["final_response"] = decision.decision_summary
+        update["final_response"] = state.final_response or decision.decision_summary
     elif decision.decision == "safe_failure":
         update["workflow_status"] = "failed"
         update["final_response"] = SAFE_FAILURE_MESSAGE

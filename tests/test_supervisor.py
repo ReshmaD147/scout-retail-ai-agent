@@ -15,9 +15,10 @@ from scout.orchestration.supervisor_decision import SupervisorDecision
 
 
 class FakePolicy:
-    def __init__(self, decision: SupervisorDecision):
+    def __init__(self, decision: SupervisorDecision, source: str = "rule_based_fallback"):
         self._decision = decision
         self.call_count = 0
+        self.last_decision_source = source
 
     def decide(self, state: RetailGraphState) -> SupervisorDecision:
         self.call_count += 1
@@ -115,8 +116,20 @@ def test_routes_to_the_agent_the_policy_chose():
     assert update["goal"] == "check stock"
     assert update["step_count"] == 1
     assert update["workflow_status"] == "in_progress"
+    assert update["supervisor_decision_source"] == "rule_based_fallback"
     assert update["tool_results"][0].tool_name == "supervisor_decision"
     assert update["tool_results"][0].summary == "checking stock"
+
+
+def test_records_supervisor_decision_source_from_policy():
+    policy = FakePolicy(
+        SupervisorDecision(decision="recommendation", goal="find products", decision_summary="searching"),
+        source="ollama",
+    )
+
+    update = supervisor_node(_state(), policy)
+
+    assert update["supervisor_decision_source"] == "ollama"
 
 
 def test_applies_a_new_plan_when_the_policy_provides_one():
@@ -209,7 +222,7 @@ def test_safe_failure_decision_fails_with_the_fixed_safe_message():
 # ---------------------------------------------------------------------------
 
 
-def test_retry_count_increments_when_the_policy_repeats_the_same_agent():
+def test_retry_count_resets_when_the_policy_repeats_a_progress_capable_specialist():
     policy = FakePolicy(
         SupervisorDecision(decision="inventory", goal="check stock", decision_summary="retrying nearby check")
     )
@@ -217,7 +230,7 @@ def test_retry_count_increments_when_the_policy_repeats_the_same_agent():
 
     update = supervisor_node(state, policy)
 
-    assert update["retry_count"] == 2
+    assert update["retry_count"] == 0
 
 
 def test_retry_count_resets_when_the_policy_moves_to_a_different_agent():

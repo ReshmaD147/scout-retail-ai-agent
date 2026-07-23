@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ActivityEvent, WorkflowStageId } from "../types/chat";
+import type { ActivityEvent } from "../types/chat";
 import { CheckIcon, CloseIcon } from "./Icons";
 
 export interface AgentActivityProps {
@@ -8,28 +8,15 @@ export interface AgentActivityProps {
   showWhenEmpty?: boolean;
 }
 
-interface WorkflowStep {
-  id: WorkflowStageId;
-  label: string;
-}
-
-const STEPS: WorkflowStep[] = [
-  { id: "understand", label: "Understanding request" },
-  { id: "plan", label: "Creating shopping plan" },
-  { id: "catalog", label: "Searching catalog" },
-  { id: "selected-store", label: "Checking selected store" },
-  { id: "nearby", label: "Checking nearby stores" },
-  { id: "compare", label: "Comparing options" },
-  { id: "prepare", label: "Preparing response" },
-];
-
 export function AgentActivity({ activities, isComplete = false, showWhenEmpty = false }: AgentActivityProps): JSX.Element | null {
-  // Completed workflows start compact. The customer can expand them to
-  // review the real stages that were emitted by /chat/stream.
   const [collapsed, setCollapsed] = useState(isComplete);
   if (activities.length === 0 && !showWhenEmpty) return null;
-
-  const byStage = new Map(activities.map((activity) => [activity.stageId, activity]));
+  const visibleActivities: ActivityEvent[] = activities.length > 0 ? activities : [{
+    id: 0,
+    type: "workflow_started",
+    label: "Understanding request",
+    status: "active",
+  }];
 
   return (
     <section className={`workflow-progress${collapsed ? " workflow-progress--collapsed" : ""}`} aria-label="Scout's workflow">
@@ -43,16 +30,16 @@ export function AgentActivity({ activities, isComplete = false, showWhenEmpty = 
       </div>
 
       {!collapsed && (
-        <ol className="workflow-progress__steps" aria-live="polite">
-          {STEPS.map((step, index) => {
-            const activity = byStage.get(step.id);
-            const status = activity?.status ?? "pending";
+        <ol className="workflow-progress__steps" aria-live="polite" aria-label="Live Scout workflow events">
+          {visibleActivities.map((activity, index) => {
+            const status = activity.status;
             return (
-              <li key={step.id} className={`workflow-progress__step workflow-progress__step--${status}`}>
+              <li key={activity.id} className={`workflow-progress__step workflow-progress__step--${status}`}>
                 <span className="workflow-progress__marker" aria-hidden="true">
                   {status === "completed" ? <CheckIcon /> : status === "failed" ? <CloseIcon /> : index + 1}
                 </span>
-                <span>{step.label}</span>
+                <span className="workflow-progress__label">{activity.label}</span>
+                <span className="workflow-progress__status">{status === "active" ? "In progress" : status === "failed" ? "Failed" : "Done"}</span>
               </li>
             );
           })}

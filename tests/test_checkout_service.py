@@ -7,6 +7,7 @@ import pytest
 from scout.config import get_settings
 from scout.services import cart_service, checkout_service
 from scout.services.checkout_service import CheckoutServiceError, ShippingAddress
+from scout.services.payment_service import PaymentIntentResult, WebhookEvent
 
 PRODUCT = "FTW-004"
 PICKUP_STORE = "STR-002"
@@ -57,6 +58,7 @@ def test_review_calculates_discount_tax_shipping_and_total_server_side(seeded_db
     assert review.tax_total == round(review.merchandise_total * get_settings().checkout_tax_rate, 2)
     assert review.shipping_total == 0.0  # pickup
     assert review.total == round(review.merchandise_total + review.tax_total, 2)
+    assert review.payment_provider == "mock"
 
 
 def test_delivery_review_persists_the_address(seeded_db_path):
@@ -179,3 +181,116 @@ def test_mock_decline_creates_no_order_or_reservation(seeded_db_path):
         assert connection.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM payments").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM inventory_reservations").fetchone()[0] == 0
+
+
+class _FakeStripeProvider:
+    def create_payment_intent(self, *, checkout_id, session_id, amount, currency, idempotency_key):
+        return PaymentIntentResult(
+            provider="stripe_test",
+            provider_reference=f"pi_{idempotency_key}",
+            status="payment_processing",
+            amount=amount,
+            currency=currency,
+            client_secret=f"pi_{idempotency_key}_secret_test",
+            publishable_key="pk_test_fake",
+        )
+
+
+@pytest.fixture()
+def stripe_settings(monkeypatch):
+    get_settings.cache_clear()
+    monkeypatch.setenv("PAYMENT_PROVIDER", "stripe_test")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_fake")
+    monkeypatch.setenv("STRIPE_PUBLISHABLE_KEY", "pk_test_fake")
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_fake")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+def test_stripe_payment_intent_uses_backend_total_and_stores_no_secret(seeded_db_path, stripe_settings, monkeypatch):
+    _pickup_cart(seeded_db_path)
+    review = checkout_service.create_checkout_review("checkout-session", db_path=seeded_db_path)
+    monkeypatch.setattr(checkout_service, "get_payment_provider", lambda: _FakeStripeProvider())
+
+    intent = checkout_service.create_checkout_payment_intent(
+        checkout_id=review.checkout_id,
+        session_id="checkout-session",
+        idempotency_key="stripe-key-0001",
+        db_path=seeded_db_path,
+    )
+
+    assert intent.amount == review.total
+    assert intent.client_secret.endswith("_secret_test")
+    with sqlite3.connect(seeded_db_path) as connection:
+        row = connection.execute(
+            "SELECT payment_intent_id, payment_status, review_json FROM checkout_sessions WHERE checkout_id = ?",
+            (review.checkout_id,),
+        ).fetchone()
+    assert row[0] == "pi_stripe-key-0001"
+    assert row[1] == "payment_processing"
+    assert "secret" not in row[2]
+
+
+def test_stripe_webhook_success_creates_order_once(seeded_db_path, stripe_settings, monkeypatch):
+    _pickup_cart(seeded_db_path)
+    review = checkout_service.create_checkout_review("checkout-session", db_path=seeded_db_path)
+    monkeypatch.setattr(checkout_service, "get_payment_provider", lambda: _FakeStripeProvider())
+    checkout_service.create_checkout_payment_intent(
+        checkout_id=review.checkout_id,
+        session_id="checkout-session",
+        idempotency_key="stripe-key-0002",
+        db_path=seeded_db_path,
+    )
+    event = WebhookEvent(
+        event_id="evt_1",
+        event_type="payment_intent.succeeded",
+        payment_intent_id="pi_stripe-key-0002",
+        amount=review.total,
+        currency=review.currency,
+        checkout_id=review.checkout_id,
+        session_id="checkout-session",
+    )
+
+    first = checkout_service.complete_stripe_checkout_from_event(event, db_path=seeded_db_path)
+    duplicate = checkout_service.complete_stripe_checkout_from_event(event, db_path=seeded_db_path)
+
+    assert first.status == "order_created"
+    assert duplicate.status == "order_created"
+    assert first.order_id == duplicate.order_id
+    with sqlite3.connect(seeded_db_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM orders").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM payments").fetchone()[0] == 1
+        assert connection.execute("SELECT COUNT(*) FROM inventory_reservations").fetchone()[0] == 1
+
+
+def test_stripe_webhook_rejects_amount_currency_and_session_mismatches(seeded_db_path, stripe_settings, monkeypatch):
+    _pickup_cart(seeded_db_path)
+    review = checkout_service.create_checkout_review("checkout-session", db_path=seeded_db_path)
+    monkeypatch.setattr(checkout_service, "get_payment_provider", lambda: _FakeStripeProvider())
+    checkout_service.create_checkout_payment_intent(
+        checkout_id=review.checkout_id,
+        session_id="checkout-session",
+        idempotency_key="stripe-key-0003",
+        db_path=seeded_db_path,
+    )
+    base = {
+        "event_id": "evt_bad",
+        "event_type": "payment_intent.succeeded",
+        "payment_intent_id": "pi_stripe-key-0003",
+        "amount": review.total,
+        "currency": review.currency,
+        "checkout_id": review.checkout_id,
+        "session_id": "checkout-session",
+    }
+    for override, error_type in [
+        ({"amount": review.total + 1}, "payment_amount_mismatch"),
+        ({"currency": "EUR"}, "payment_currency_mismatch"),
+        ({"session_id": "someone-else"}, "payment_session_mismatch"),
+    ]:
+        with pytest.raises(CheckoutServiceError) as exc_info:
+            checkout_service.complete_stripe_checkout_from_event(
+                WebhookEvent(**{**base, **override, "event_id": f"evt_{error_type}"}),
+                db_path=seeded_db_path,
+            )
+        assert exc_info.value.error_type == error_type

@@ -146,7 +146,7 @@ def _build_activity_events(state: RetailGraphState) -> List[str]:
     scout/orchestration/events.py (Step 13) so /chat and /chat/stream
     describe the same activity the same way.
     """
-    return ["Understanding your request"] + safe_events.activity_labels_for_tool_results(state.tool_results)
+    return ["Understanding request"] + safe_events.activity_labels_for_tool_results(state.tool_results)
 
 
 def _map_workflow_status(state: RetailGraphState) -> str:

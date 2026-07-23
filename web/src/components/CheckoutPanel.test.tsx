@@ -6,6 +6,10 @@ import type { UseCheckoutResult } from "../hooks/useCheckout";
 import type { CartView } from "../types/cart";
 import type { CheckoutReview, OrderConfirmation } from "../types/checkout";
 
+vi.mock("./StripePaymentSection", () => ({
+  StripePaymentSection: () => <div>Stripe test payment section</div>,
+}));
+
 const cart: CartView = {
   cart_id: "CART-1",
   session_id: "s-1",
@@ -83,10 +87,14 @@ function checkoutState(overrides: Partial<UseCheckoutResult> = {}): UseCheckoutR
   return {
     review: null,
     confirmation: null,
+    paymentIntent: null,
+    paymentStatus: null,
     isLoading: false,
     errorMessage: null,
     createReview: vi.fn().mockResolvedValue(undefined),
     confirm: vi.fn().mockResolvedValue(undefined),
+    createStripeIntent: vi.fn().mockResolvedValue(null),
+    refreshPaymentStatus: vi.fn().mockResolvedValue(null),
     reset: vi.fn(),
     dismissError: vi.fn(),
     ...overrides,
@@ -122,6 +130,16 @@ describe("CheckoutPanel", () => {
     expect(placeOrder).toBeEnabled();
     await user.click(placeOrder);
     expect(checkout.confirm).toHaveBeenCalledWith(true);
+  });
+
+  it("renders Stripe payment when the backend checkout review requires stripe_test", () => {
+    const checkout = checkoutState({ review: { ...review, payment_provider: "stripe_test" } });
+
+    render(<CheckoutPanel cart={cart} checkout={checkout} />);
+
+    expect(screen.getByText("Stripe test payment section")).toBeInTheDocument();
+    expect(screen.queryByText(/mock payment in test mode/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /place test order/i })).not.toBeInTheDocument();
   });
 
   it("shows the confirmed order result from the backend", () => {

@@ -7,3 +7,6 @@
  */
 export const API_BASE_URL: string =
   import.meta.env.VITE_SCOUT_API_BASE_URL ?? "http://127.0.0.1:8000";
+
+export const STRIPE_TEST_CHECKOUT_ENABLED: boolean =
+  import.meta.env.VITE_STRIPE_TEST_CHECKOUT === "true";

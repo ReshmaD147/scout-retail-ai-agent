@@ -54,6 +54,16 @@ def recommendation_agent_node(state: RetailGraphState) -> Dict[str, Any]:
         deals_only=bool(intent.get("deals_only")),
         limit=20,
     )
+    search_arguments = {
+        "query_text": state.customer_query,
+        "keyword": intent.get("keyword"),
+        "category": intent.get("category"),
+        "subcategory": intent.get("subcategory"),
+        "max_price": intent.get("max_price"),
+        "attributes": intent.get("attribute_filters") or None,
+        "deals_only": bool(intent.get("deals_only")),
+        "limit": 20,
+    }
 
     update: Dict[str, Any] = {"step_count": state.step_count + 1}
 
@@ -68,7 +78,12 @@ def recommendation_agent_node(state: RetailGraphState) -> Dict[str, Any]:
         ]
         update["product_candidates"] = []
         update["tool_results"] = [
-            ToolCallTrace(tool_name="semantic_search_products", status="error", summary=result.error.message)
+            ToolCallTrace(
+                tool_name="semantic_search_products",
+                status="error",
+                summary=result.error.message,
+                validated_arguments=search_arguments,
+            )
         ]
         return update
 
@@ -82,11 +97,13 @@ def recommendation_agent_node(state: RetailGraphState) -> Dict[str, Any]:
                     f"no products matched via {result.retrieval_method} "
                     f"({result.candidates_considered} candidate(s) considered)"
                 ),
+                validated_arguments=search_arguments,
             )
         ]
         return update
 
-    ranked = rank_products([product.product_id for product in result.products])
+    rank_arguments = {"product_ids": [product.product_id for product in result.products]}
+    ranked = rank_products(rank_arguments["product_ids"])
     candidates = [entry.product for entry in ranked.ranked_products]
 
     update["product_candidates"] = candidates
@@ -98,9 +115,13 @@ def recommendation_agent_node(state: RetailGraphState) -> Dict[str, Any]:
                 f"found {len(result.products)} candidate(s) within budget via "
                 f"{result.retrieval_method} ({result.candidates_considered} candidate(s) considered)"
             ),
+            validated_arguments=search_arguments,
         ),
         ToolCallTrace(
-            tool_name="rank_products", status="success", summary=f"ranked {len(candidates)} candidate(s)"
+            tool_name="rank_products",
+            status="success",
+            summary=f"ranked {len(candidates)} candidate(s)",
+            validated_arguments=rank_arguments,
         ),
     ]
     evidence = [
@@ -168,6 +189,7 @@ def rerank_node(state: RetailGraphState) -> Dict[str, Any]:
 
     max_recommended = get_settings().max_recommended_products
     ranked = rank_products([candidate.product_id for candidate in survivors])
+    rank_arguments = {"product_ids": [candidate.product_id for candidate in survivors], "phase": "fulfillment_rerank"}
     final_candidates = [entry.product for entry in ranked.ranked_products][:max_recommended]
     update["product_candidates"] = final_candidates
     update["tool_results"] = [
@@ -178,6 +200,7 @@ def rerank_node(state: RetailGraphState) -> Dict[str, Any]:
                 f"reranked {len(survivors)} fulfillable candidate(s), "
                 f"returning the top {len(final_candidates)}"
             ),
+            validated_arguments=rank_arguments,
         )
     ]
     return update

@@ -17,7 +17,6 @@ import type {
   RecommendationFilters,
   StreamEvent,
   StreamEventType,
-  WorkflowStageId,
 } from "../types/chat";
 
 /** UI-level phase - distinct from (and layered on top of) the
@@ -101,125 +100,47 @@ export interface UseScoutChatResult {
   reset: () => void;
 }
 
-const STAGE_ORDER: WorkflowStageId[] = [
-  "understand",
-  "plan",
-  "catalog",
-  "selected-store",
-  "nearby",
-  "compare",
-  "prepare",
-];
-
-function eventDataText(event: StreamEvent, key: string): string {
-  const value = event.data[key];
-  return typeof value === "string" ? value : "";
-}
-
-function stageForEvent(event: StreamEvent): WorkflowStageId | null {
-  if (event.event_type === "workflow_started") return "understand";
-  if (event.event_type === "plan_created") return "plan";
-  if (event.event_type === "final_response" || event.event_type === "clarification_required" || event.event_type === "confirmation_required") {
-    return "prepare";
-  }
-  if (event.event_type === "workflow_replanned") return "compare";
-  if (event.event_type === "verification_started" || event.event_type === "verification_completed") return "prepare";
-
-  if (event.event_type === "agent_selected") {
-    const agent = eventDataText(event, "agent");
-    if (agent === "recommendation") return "catalog";
-    if (agent === "order") return "compare";
-    return "plan";
-  }
-
-  if (event.event_type !== "tool_started" && event.event_type !== "tool_completed") return null;
-  const toolName = eventDataText(event, "tool_name");
-  const nodeName = eventDataText(event, "node_name");
-
-  if (nodeName === "recommendation_agent" || ["semantic_search_products", "search_products", "get_promotions"].includes(toolName)) {
-    return "catalog";
-  }
-  if (nodeName === "inventory_agent" || toolName === "check_store_inventory" || toolName === "availability_evaluation") {
-    return "selected-store";
-  }
-  if (nodeName === "nearby_store_search" || toolName === "find_nearby_inventory") {
-    return "nearby";
-  }
-  if (
-    ["network_delivery_search", "substitute_search", "reranking", "external_offer_fallback", "order_agent"].includes(nodeName) ||
-    [
-      "check_network_inventory",
-      "get_delivery_estimate",
-      "find_available_substitutes",
-      "search_external_offers",
-      "lookup_order",
-      "lookup_latest_order",
-      "get_order_status",
-      "get_payment_status",
-      "get_fulfillment_details",
-      "check_order_eligibility",
-    ].includes(toolName)
-  ) {
-    return "compare";
-  }
-  if (nodeName === "response_verification" || toolName === "response_verification" || toolName === "get_product_details") {
-    return "prepare";
-  }
-  if (toolName === "rank_products") return nodeName === "reranking" ? "compare" : "catalog";
-  return null;
-}
-
 function applyWorkflowEvent(previous: ActivityEvent[], event: StreamEvent): ActivityEvent[] {
   if (event.event_type === "workflow_failed") {
-    const active = [...previous].reverse().find((activity) => activity.status === "active");
-    const failedStage = active?.stageId ?? "prepare";
     const failedActivity: ActivityEvent = {
       id: event.event_id,
-      stageId: failedStage,
       type: event.event_type,
       label: event.label,
       status: "failed",
     };
-    const existingIndex = previous.findIndex((activity) => activity.stageId === failedStage);
-    if (existingIndex < 0) {
-      return [...previous, failedActivity].sort(
-        (left, right) => STAGE_ORDER.indexOf(left.stageId) - STAGE_ORDER.indexOf(right.stageId),
-      );
-    }
-    return previous.map((activity) =>
-      activity.stageId === failedStage ? failedActivity : activity
-    );
+    return [
+      ...previous.map((activity) => activity.status === "active" ? { ...activity, status: "failed" as const } : activity),
+      failedActivity,
+    ];
   }
 
-  const stageId = stageForEvent(event);
-  if (stageId === null) return previous;
-  const status: ActivityEvent["status"] =
-    event.event_type === "tool_started" || event.event_type === "workflow_started" || event.event_type === "verification_started"
-      ? "active"
-      : "completed";
-  const stageIndex = STAGE_ORDER.indexOf(stageId);
+  if (event.event_type === "final_response") {
+    return previous.map((activity) => activity.status === "active" ? { ...activity, status: "completed" as const } : activity);
+  }
 
-  const next = previous.map((activity) => {
-    const activityIndex = STAGE_ORDER.indexOf(activity.stageId);
-    if (activity.status === "active" && activity.stageId !== stageId && activityIndex <= stageIndex) {
-      return { ...activity, status: "completed" as const };
-    }
-    return activity;
-  });
-  const existingIndex = next.findIndex((activity) => activity.stageId === stageId);
+  const completionType = event.event_type.replace("_completed", "_started");
+  const matchingStartedIndex = event.event_type.endsWith("_completed")
+    ? previous.findIndex((activity) => activity.type === completionType)
+    : -1;
+
+  if (matchingStartedIndex >= 0) {
+    return previous.map((activity, index) => (
+      index === matchingStartedIndex ? { ...activity, status: "completed" as const } : activity
+    ));
+  }
+
   const activity: ActivityEvent = {
     id: event.event_id,
-    stageId,
     type: event.event_type,
     label: event.label,
-    status,
+    status: event.event_type.endsWith("_completed") || event.event_type === "clarification_required" || event.event_type === "confirmation_required"
+      ? "completed"
+      : "active",
   };
-  if (existingIndex >= 0) {
-    next[existingIndex] = activity;
-  } else {
-    next.push(activity);
-  }
-  return next.sort((left, right) => STAGE_ORDER.indexOf(left.stageId) - STAGE_ORDER.indexOf(right.stageId));
+  return [
+    ...previous.map((entry) => entry.status === "active" ? { ...entry, status: "completed" as const } : entry),
+    activity,
+  ];
 }
 
 export function useScoutChat(): UseScoutChatResult {

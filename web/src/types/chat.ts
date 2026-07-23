@@ -241,17 +241,7 @@ export interface StreamEvent {
 /** A single safe, customer-facing workflow activity entry for display (derived from StreamEvent, not a backend type itself). */
 export interface ActivityEvent {
   id: number;
-  stageId: WorkflowStageId;
   type: StreamEventType;
   label: string;
   status: "active" | "completed" | "failed";
 }
-
-export type WorkflowStageId =
-  | "understand"
-  | "plan"
-  | "catalog"
-  | "selected-store"
-  | "nearby"
-  | "compare"
-  | "prepare";

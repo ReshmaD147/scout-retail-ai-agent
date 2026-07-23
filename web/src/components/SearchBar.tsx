@@ -43,6 +43,7 @@ export function SearchBar({ value, onChange, onSubmit, onCancel, isLoading }: Se
           onKeyDown={handleKeyDown}
           placeholder="Find comfortable work shoes under $100 that I can pick up today near Maple Grove."
           rows={1}
+          aria-label="Search"
           aria-describedby="scout-query-hint"
           disabled={isLoading}
         />
@@ -51,6 +52,7 @@ export function SearchBar({ value, onChange, onSubmit, onCancel, isLoading }: Se
           className="search-bar__submit"
           disabled={!canSubmit}
           aria-label={isLoading ? "Searching..." : "Search"}
+          title={isLoading ? "Searching…" : "Search"}
         >
           <SendIcon />
         </button>
