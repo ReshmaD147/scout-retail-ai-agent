@@ -21,6 +21,7 @@ EXPECTED_TABLES = {
     "orders",
     "order_items",
     "inventory_reservations",
+    "order_fulfillments",
     "external_offers",
     "affiliate_clicks",
 }

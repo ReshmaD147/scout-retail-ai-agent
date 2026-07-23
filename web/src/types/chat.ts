@@ -21,6 +21,7 @@ export interface ProductSummary {
   rating: number | null;
   review_count: number;
   active: boolean;
+  attributes?: Record<string, unknown>;
 }
 
 /**
@@ -42,6 +43,12 @@ export interface FulfillmentOption {
   substitute_for: string | null;
   delivery_min_days: number | null;
   delivery_max_days: number | null;
+}
+
+export interface RequestedLocation {
+  label: string;
+  latitude: number;
+  longitude: number;
 }
 
 
@@ -69,6 +76,84 @@ export interface ExternalOfferSummary {
   disclosure: string;
 }
 
+export interface OrderItemStatus {
+  order_item_id: string;
+  product_id: string;
+  product_name: string;
+  brand: string;
+  quantity: number;
+  charged_unit_price: number;
+  line_total: number;
+}
+
+export interface PaymentStatus {
+  status: string;
+  provider: string;
+  provider_reference: string;
+  amount: number;
+  currency: string;
+  paid_at: string;
+}
+
+export interface TrackingInformation {
+  available: boolean;
+  carrier_name: string | null;
+  tracking_number: string | null;
+  tracking_url: string | null;
+  message: string;
+}
+
+export interface OrderShippingAddress {
+  full_name: string;
+  line1: string;
+  line2: string | null;
+  city: string;
+  state: string;
+  postal_code: string;
+  country: string;
+}
+
+export interface FulfillmentStatus {
+  fulfillment_type: "pickup" | "delivery";
+  status: string;
+  store_id: string | null;
+  store_name: string | null;
+  shipping_address: OrderShippingAddress | null;
+  estimated_ready_at: string | null;
+  estimated_delivery_at: string | null;
+  estimate_source: "configured_policy" | "persisted_tracking";
+  tracking: TrackingInformation;
+}
+
+export interface EligibilityCheck {
+  eligible: boolean;
+  reason: string;
+  deadline: string | null;
+}
+
+export interface OrderEligibility {
+  cancellation: EligibilityCheck;
+  return_eligibility: EligibilityCheck;
+  exchange: EligibilityCheck;
+}
+
+export interface OrderStatusView {
+  order_id: string;
+  session_id: string;
+  order_status: string;
+  created_at: string;
+  items: OrderItemStatus[];
+  subtotal: number;
+  discount_total: number;
+  tax_total: number;
+  shipping_total: number;
+  total: number;
+  currency: string;
+  payment: PaymentStatus;
+  fulfillment: FulfillmentStatus;
+  eligibility: OrderEligibility;
+}
+
 /** scout/api/schemas/chat.py::ChatError */
 export interface ChatError {
   code: string;
@@ -90,6 +175,16 @@ export interface ChatRequest {
   user_id?: string;
   store_id?: string;
   location?: string;
+  filters?: RecommendationFilters;
+}
+
+export interface RecommendationFilters {
+  max_price?: number;
+  category?: string;
+  product_type?: string;
+  attributes?: string[];
+  in_stock_only?: boolean;
+  fulfillment?: "pickup" | "delivery";
 }
 
 /** scout/api/schemas/chat.py::ChatResponse - the whole body POST /chat returns, and also the `final_response` stream event's `data`. */
@@ -100,7 +195,9 @@ export interface ChatResponse {
   answer: string | null;
   products: ProductSummary[];
   fulfillment_options: FulfillmentOption[];
+  requested_location?: RequestedLocation | null;
   external_offers: ExternalOfferSummary[];
+  order?: OrderStatusView | null;
   activity_events: string[];
   errors: ChatError[];
 }
@@ -144,6 +241,17 @@ export interface StreamEvent {
 /** A single safe, customer-facing workflow activity entry for display (derived from StreamEvent, not a backend type itself). */
 export interface ActivityEvent {
   id: number;
+  stageId: WorkflowStageId;
   type: StreamEventType;
   label: string;
+  status: "active" | "completed" | "failed";
 }
+
+export type WorkflowStageId =
+  | "understand"
+  | "plan"
+  | "catalog"
+  | "selected-store"
+  | "nearby"
+  | "compare"
+  | "prepare";

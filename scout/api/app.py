@@ -16,10 +16,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from scout.api.exceptions import register_exception_handlers
 from scout.api.routes.affiliate import router as affiliate_router
 from scout.api.routes.cart import router as cart_router
+from scout.api.routes.catalog import router as catalog_router
 from scout.api.routes.chat import router as chat_router
 from scout.api.routes.chat_stream import router as chat_stream_router
 from scout.api.routes.checkout import router as checkout_router
 from scout.api.routes.health import router as health_router
+from scout.api.routes.orders import router as orders_router
 from scout.api.routes.stores import router as stores_router
 from scout.config import get_settings
 from scout.logging_config import configure_logging
@@ -87,8 +89,10 @@ def create_app() -> FastAPI:
     app.include_router(chat_router)
     app.include_router(chat_stream_router)
     app.include_router(cart_router)
+    app.include_router(catalog_router)
     app.include_router(checkout_router)
     app.include_router(affiliate_router)
+    app.include_router(orders_router)
     app.include_router(stores_router)
 
     return app

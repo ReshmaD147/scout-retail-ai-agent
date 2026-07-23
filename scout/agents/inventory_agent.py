@@ -72,16 +72,12 @@ def inventory_agent_node(state: RetailGraphState) -> Dict[str, Any]:
 
     store_id = (state.intent or {}).get("selected_store_id")
     if not store_id:
-        update["errors"] = [
-            WorkflowError(
-                error_type="not_found",
-                message="No store was resolved to check pickup inventory against.",
-                agent="inventory",
-                step="check_store_inventory",
-            )
-        ]
         update["tool_results"] = [
-            ToolCallTrace(tool_name="check_store_inventory", status="error", summary="no selected store to check")
+            ToolCallTrace(
+                tool_name="check_store_inventory",
+                status="success",
+                summary="selected-store pickup check was not requested; continuing to network availability",
+            )
         ]
         return update
 
@@ -177,6 +173,8 @@ def availability_evaluation_node(state: RetailGraphState) -> Dict[str, Any]:
     total = len(state.product_candidates)
     if total == 0:
         summary = "no candidates to evaluate"
+    elif not (state.intent or {}).get("selected_store_id"):
+        summary = "selected-store pickup check was not needed for this request"
     else:
         still_needed = len(products_needing_fulfillment(state))
         fulfilled = total - still_needed

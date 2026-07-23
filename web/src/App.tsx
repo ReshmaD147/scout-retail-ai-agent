@@ -1,28 +1,42 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { AgentActivity } from "./components/AgentActivity";
-import { CartButton } from "./components/CartButton";
 import { CartDrawer } from "./components/CartDrawer";
 import { EmptyState } from "./components/EmptyState";
 import { ErrorState } from "./components/ErrorState";
 import { ExternalOfferGrid } from "./components/ExternalOfferGrid";
+import { FulfillmentSummary } from "./components/FulfillmentSummary";
 import { Header } from "./components/Header";
 import { LoadingState } from "./components/LoadingState";
+import { MobileHeader } from "./components/MobileHeader";
+import { OrderStatusCard } from "./components/OrderStatusCard";
+import { OrderSupportPanel } from "./components/OrderSupportPanel";
+import { ProductFilters } from "./components/ProductFilters";
 import { ProductGrid } from "./components/ProductGrid";
+import { RefineSearchCard } from "./components/RefineSearchCard";
+import { ResultsHeader } from "./components/ResultsHeader";
 import { SearchBar } from "./components/SearchBar";
+import { Sidebar } from "./components/Sidebar";
+import { SuggestionChips } from "./components/SuggestionChips";
+import { TopActions } from "./components/TopActions";
+import { SparklesIcon } from "./components/Icons";
 import { useCart } from "./hooks/useCart";
 import { useScoutChat } from "./hooks/useScoutChat";
+import type { RecommendationFilters } from "./types/chat";
 
-const EXAMPLE_QUERIES = [
-  "Find comfortable work shoes under $100 that I can pick up today near Maple Grove.",
+const SUGGESTED_QUERIES = [
+  "Work shoes under $100",
+  "Backpack for travel",
+  "Wireless earbuds",
+  "Coffee maker deals",
 ];
 
-/**
- * Scout's main shopping interface (Step 14). Wires `useScoutChat` (all
- * networking and workflow-state handling) to the presentational
- * components - this file decides *which* state to show, never *what a
- * result means*: that classification already happened on the backend
- * (`ChatResponse.status`, scout/api/schemas/chat.py) and in the hook.
- */
+const STARTER_QUERIES = [
+  "Find comfortable work shoes under $100 that I can pick up today near Maple Grove.",
+  "Where is my order?",
+];
+
+const DEFAULT_FILTERS: RecommendationFilters = { in_stock_only: true };
+
 export function App(): JSX.Element {
   const {
     query,
@@ -38,16 +52,51 @@ export function App(): JSX.Element {
     cancel,
     reset,
   } = useScoutChat();
-
-  // Sharing one sessionId with useScoutChat (Step 15) is what lets the
-  // cart's "add the first product" command resolve against the exact
-  // ranked list this session's last /chat response returned.
   const cartState = useCart(sessionId);
   const [isCartOpen, setIsCartOpen] = useState(false);
+  const [isNavOpen, setIsNavOpen] = useState(false);
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
+  const [activeDialog, setActiveDialog] = useState<"categories" | "saved" | null>(null);
+  const [explanationExpanded, setExplanationExpanded] = useState(false);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [activeFilters, setActiveFilters] = useState<RecommendationFilters>(DEFAULT_FILTERS);
+  const [lastSubmittedQuery, setLastSubmittedQuery] = useState("");
 
-  const handleExampleSelect = (example: string): void => {
-    setQuery(example);
-    submit(example);
+  const cartSubtotal = cartState.cart?.subtotal ?? 0;
+  const currentFulfillment = response?.fulfillment_options ?? [];
+  const currentOrder = response?.order ?? null;
+
+  const recordSearch = (text: string): void => {
+    setRecentSearches((previous) => [text, ...previous.filter((item) => item !== text)].slice(0, 5));
+  };
+
+  const runSearch = (override?: string, filtersOverride?: RecommendationFilters): void => {
+    const text = (override ?? query).trim();
+    if (!text || isLoading) return;
+    const isNewQuery = text !== lastSubmittedQuery;
+    const filters = filtersOverride ?? (isNewQuery ? DEFAULT_FILTERS : activeFilters);
+    if (isNewQuery && filtersOverride === undefined) setActiveFilters(DEFAULT_FILTERS);
+    if (filtersOverride !== undefined) setActiveFilters(filtersOverride);
+    setLastSubmittedQuery(text);
+    setExplanationExpanded(false);
+    setIsHelpOpen(false);
+    setActiveDialog(null);
+    recordSearch(text);
+    setIsNavOpen(false);
+    submit(text, filters);
+  };
+
+  const startNewSearch = (): void => {
+    reset();
+    setExplanationExpanded(false);
+    setIsNavOpen(false);
+    setIsHelpOpen(false);
+    setActiveDialog(null);
+    setActiveFilters(DEFAULT_FILTERS);
+    setLastSubmittedQuery("");
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    window.setTimeout(() => document.getElementById("scout-query")?.focus(), 0);
   };
 
   const handleAddToCart = (productId: string): void => {
@@ -55,60 +104,173 @@ export function App(): JSX.Element {
     setIsCartOpen(true);
   };
 
-  return (
-    <div className="app">
-      <div className="app__header-row">
-        <Header />
-        <CartButton itemCount={cartState.itemCount} onClick={() => setIsCartOpen(true)} />
-      </div>
+  const focusSearch = (): void => {
+    setIsHelpOpen(false);
+    setActiveDialog(null);
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    window.setTimeout(() => document.getElementById("scout-query")?.focus(), 0);
+  };
 
-      <main className="app__main">
-        <SearchBar
-          value={query}
-          onChange={setQuery}
-          onSubmit={() => submit()}
-          onCancel={cancel}
-          isLoading={isLoading}
+
+  const startOrderHelp = (): void => {
+    setIsHelpOpen(false);
+    setActiveDialog(null);
+    setQuery("I need help with my order");
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+    window.setTimeout(() => document.getElementById("scout-query")?.focus(), 0);
+  };
+
+  const sidebarSearches = useMemo(
+    () => recentSearches.length > 0 ? recentSearches : STARTER_QUERIES,
+    [recentSearches]
+  );
+
+  return (
+    <div className={`app-shell${currentOrder ? " app-shell--order" : ""}`}>
+      <div className={`app-shell__overlay${isNavOpen ? " app-shell__overlay--visible" : ""}`} onClick={() => setIsNavOpen(false)} aria-hidden="true" />
+      <Sidebar
+        itemCount={cartState.itemCount}
+        recentSearches={sidebarSearches}
+        isOpen={isNavOpen}
+        onClose={() => setIsNavOpen(false)}
+        onNewSearch={startNewSearch}
+        onDeals={() => runSearch("Show me products with active deals")}
+        onCategories={() => { setIsHelpOpen(false); setActiveDialog("categories"); setIsNavOpen(false); }}
+        onSaved={() => { setIsHelpOpen(false); setActiveDialog("saved"); setIsNavOpen(false); }}
+        showHelpCard={!currentOrder}
+        onCartClick={() => setIsCartOpen(true)}
+        onRecentSearch={runSearch}
+        onNeedHelp={() => { setActiveDialog(null); setIsHelpOpen(true); }}
+      />
+
+      <div className="app-shell__center">
+        <MobileHeader
+          itemCount={cartState.itemCount}
+          onMenuClick={() => setIsNavOpen(true)}
+          onCartClick={() => setIsCartOpen(true)}
         />
 
-        <section className="app__results" aria-live="polite">
-          {phase === "idle" && (
-            <EmptyState
-              title="Try an example"
-              examples={EXAMPLE_QUERIES}
-              onExampleSelect={handleExampleSelect}
+        <main className="main-content">
+          <Header />
+          <SearchBar
+            value={query}
+            onChange={setQuery}
+            onSubmit={() => runSearch()}
+            onCancel={cancel}
+            isLoading={isLoading}
+          />
+          <SuggestionChips suggestions={SUGGESTED_QUERIES} disabled={isLoading} onSelect={runSearch} />
+
+          <section className="main-content__results" aria-live="polite">
+            {phase === "idle" && (
+              <EmptyState
+                title="Describe what you need"
+                message="Scout will search the catalog, verify inventory, and show grounded options."
+                examples={STARTER_QUERIES}
+                onExampleSelect={runSearch}
+              />
+            )}
+
+            {phase === "loading" && (
+              <>
+                <AgentActivity activities={activities} showWhenEmpty />
+                <LoadingState />
+              </>
+            )}
+
+            {phase === "canceled" && (
+              <div className="app__notice" role="status">
+                <p>Search canceled.</p>
+                <button type="button" onClick={startNewSearch}>Start a new search</button>
+              </div>
+            )}
+
+            {phase === "error" && errorMessage && <ErrorState message={errorMessage} onRetry={() => runSearch()} />}
+
+            {phase === "result" && response && (
+              <ResultView
+                activities={activities}
+                response={response}
+                usedFallback={usedFallback}
+                sessionId={sessionId}
+                explanationExpanded={explanationExpanded}
+                onToggleExplanation={() => setExplanationExpanded((value) => !value)}
+                onAddToCart={handleAddToCart}
+                onRefine={focusSearch}
+                onNeedHelp={response.order ? startOrderHelp : () => { setActiveDialog(null); setIsHelpOpen(true); }}
+                onContinueShopping={startNewSearch}
+              />
+            )}
+          </section>
+        </main>
+      </div>
+
+      <aside className="right-panel" aria-label="Shopping context">
+        <TopActions
+          itemCount={cartState.itemCount}
+          subtotal={cartSubtotal}
+          showHelp={!currentOrder}
+          onCartClick={() => setIsCartOpen(true)}
+          onNeedHelp={() => { setActiveDialog(null); setIsHelpOpen(true); }}
+          onSaved={() => { setIsHelpOpen(false); setActiveDialog("saved"); }}
+        />
+        {currentOrder ? (
+          <OrderSupportPanel order={currentOrder} onNeedHelp={startOrderHelp} onContinueShopping={startNewSearch} />
+        ) : (
+          <>
+            <FulfillmentSummary
+              options={currentFulfillment}
+              stores={cartState.stores}
+              requestedLocation={response?.requested_location ?? null}
             />
-          )}
-
-          {phase === "loading" && (
-            <>
-              <LoadingState />
-              <AgentActivity activities={activities} />
-            </>
-          )}
-
-          {phase === "canceled" && (
-            <div className="app__notice" role="status">
-              <p>Search canceled.</p>
-              <button type="button" onClick={reset}>
-                Start a new search
-              </button>
-            </div>
-          )}
-
-          {phase === "error" && errorMessage && <ErrorState message={errorMessage} onRetry={() => submit()} />}
-
-          {phase === "result" && response && (
-            <ResultView
-              activities={activities}
-              response={response}
-              usedFallback={usedFallback}
-              sessionId={sessionId}
-              onAddToCart={handleAddToCart}
+            <ProductFilters
+              value={activeFilters}
+              disabled={isLoading || !lastSubmittedQuery}
+              onApply={(filters) => runSearch(lastSubmittedQuery || query, filters)}
             />
-          )}
+          </>
+        )}
+        {!currentOrder && (
+          <button type="button" className="floating-scout" aria-label="Ask Scout" onClick={focusSearch}>
+            <SparklesIcon />
+          </button>
+        )}
+      </aside>
+
+      {activeDialog === "categories" && (
+        <section className="navigation-dialog" role="dialog" aria-modal="true" aria-labelledby="category-dialog-title">
+          <button type="button" className="navigation-dialog__close" aria-label="Close categories" onClick={() => setActiveDialog(null)}>×</button>
+          <h2 id="category-dialog-title">Browse categories</h2>
+          <p>Choose a real Scout catalog category. Scout will run a normal verified search.</p>
+          <div className="navigation-dialog__choices">
+            <button type="button" onClick={() => runSearch("Show me footwear")}>Footwear</button>
+            <button type="button" onClick={() => runSearch("Show me bags")}>Bags</button>
+            <button type="button" onClick={() => runSearch("Show me electronics")}>Electronics</button>
+            <button type="button" onClick={() => runSearch("Show me home and kitchen products")}>Home &amp; Kitchen</button>
+          </div>
         </section>
-      </main>
+      )}
+
+      {activeDialog === "saved" && (
+        <section className="navigation-dialog" role="dialog" aria-modal="true" aria-labelledby="saved-dialog-title">
+          <button type="button" className="navigation-dialog__close" aria-label="Close saved products" onClick={() => setActiveDialog(null)}>×</button>
+          <h2 id="saved-dialog-title">Saved products</h2>
+          <p>Saved products are not part of the current backend yet. Nothing is being hidden or invented.</p>
+          <button type="button" className="navigation-dialog__primary" onClick={() => { setActiveDialog(null); focusSearch(); }}>Continue shopping</button>
+        </section>
+      )}
+
+      {isHelpOpen && (
+        <section className="help-popover" role="dialog" aria-modal="false" aria-labelledby="help-popover-title">
+          <button type="button" className="help-popover__close" aria-label="Close help" onClick={() => setIsHelpOpen(false)}>×</button>
+          <SparklesIcon />
+          <h2 id="help-popover-title">{currentOrder ? "Order help" : "How Scout can help"}</h2>
+          <p>{currentOrder ? "Ask about payment, pickup, delivery, tracking, or eligibility for this order." : "Ask for products, store availability, delivery options, cart help, checkout, or an existing order status."}</p>
+          <button type="button" onClick={focusSearch}>Ask Scout</button>
+        </section>
+      )}
 
       <CartDrawer
         isOpen={isCartOpen}
@@ -117,12 +279,14 @@ export function App(): JSX.Element {
         isLoading={cartState.isLoading}
         errorMessage={cartState.errorMessage}
         stores={cartState.stores}
+        storesErrorMessage={cartState.storesErrorMessage}
         onUpdateQuantity={(cartItemId, quantity) => void cartState.updateQuantity(cartItemId, quantity)}
         onRemoveItem={(cartItemId) => void cartState.removeItem(cartItemId)}
         onClear={() => void cartState.clear()}
         onChoosePickup={(storeId) => void cartState.choosePickup(storeId)}
         onChooseDelivery={() => void cartState.chooseDelivery()}
         onDismissError={cartState.dismissError}
+        onRefreshStores={() => void cartState.refreshStores()}
         sessionId={sessionId}
         onOrderCompleted={() => void cartState.refresh()}
       />
@@ -135,26 +299,35 @@ interface ResultViewProps {
   response: NonNullable<ReturnType<typeof useScoutChat>["response"]>;
   usedFallback: boolean;
   sessionId: string;
+  explanationExpanded: boolean;
+  onToggleExplanation: () => void;
   onAddToCart: (productId: string) => void;
+  onRefine: () => void;
+  onNeedHelp: () => void;
+  onContinueShopping: () => void;
 }
 
-/** Renders whichever of the five verified `ChatResponse.status`
- * outcomes the backend actually returned - each one is a normal,
- * successfully-handled business result, not an error. */
-function ResultView({ activities, response, usedFallback, sessionId, onAddToCart }: ResultViewProps): JSX.Element {
+function ResultView({
+  activities,
+  response,
+  usedFallback,
+  sessionId,
+  explanationExpanded,
+  onToggleExplanation,
+  onAddToCart,
+  onRefine,
+  onNeedHelp,
+  onContinueShopping,
+}: ResultViewProps): JSX.Element {
+  const hasProducts = response.products.length > 0;
+
   return (
     <div className="result-view">
-      <AgentActivity activities={activities} />
+      {!response.order && <AgentActivity activities={activities} isComplete />}
 
-      {usedFallback && (
-        <p className="result-view__fallback-note">
-          Live updates weren&apos;t available for this search, so Scout ran it directly.
-        </p>
-      )}
+      {usedFallback && <p className="result-view__fallback-note">Live updates weren&apos;t available for this search, so Scout ran it directly.</p>}
 
-      {response.status === "no_results" && (
-        <EmptyState title="No matching products found" message={response.answer ?? undefined} />
-      )}
+      {response.status === "no_results" && <EmptyState title="No matching products found" message={response.answer ?? undefined} />}
 
       {response.status === "clarification_required" && (
         <div className="result-view__clarification" role="status">
@@ -174,30 +347,30 @@ function ResultView({ activities, response, usedFallback, sessionId, onAddToCart
 
       {response.status === "completed" && (
         <>
-          <div className="result-view__answer">
-            <h2>Scout&apos;s answer</h2>
-            <p>{response.answer}</p>
-          </div>
-          {response.products.length > 0 && (
-            <ProductGrid
-              products={response.products}
-              fulfillmentOptions={response.fulfillment_options}
-              onAddToCart={onAddToCart}
-            />
-          )}
-          <ExternalOfferGrid
-            offers={response.external_offers}
-            sessionId={sessionId}
-            workflowId={response.workflow_id}
-          />
+          {hasProducts ? (
+            <>
+              <ResultsHeader count={Math.min(response.products.length, 3)} explanationExpanded={explanationExpanded} onToggleExplanation={onToggleExplanation} />
+              {explanationExpanded && response.answer && (
+                <div className="result-view__answer" role="status">
+                  <h2>Why Scout selected these</h2>
+                  <p>{response.answer}</p>
+                </div>
+              )}
+              <ProductGrid products={response.products} fulfillmentOptions={response.fulfillment_options} onAddToCart={onAddToCart} />
+              <RefineSearchCard onRefine={onRefine} />
+            </>
+          ) : response.answer && !response.order && response.external_offers.length === 0 ? (
+            <div className="result-view__answer"><h2>Scout&apos;s answer</h2><p>{response.answer}</p></div>
+          ) : null}
+
+          <ExternalOfferGrid offers={response.external_offers} sessionId={sessionId} workflowId={response.workflow_id} />
+          {response.order && <OrderStatusCard order={response.order} onNeedHelp={onNeedHelp} onContinueShopping={onContinueShopping} />}
         </>
       )}
 
       {response.errors.length > 0 && (
         <ul className="result-view__errors">
-          {response.errors.map((error, index) => (
-            <li key={`${error.code}-${index}`}>{error.message}</li>
-          ))}
+          {response.errors.map((error, index) => <li key={`${error.code}-${index}`}>{error.message}</li>)}
         </ul>
       )}
     </div>

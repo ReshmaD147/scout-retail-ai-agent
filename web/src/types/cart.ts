@@ -51,6 +51,10 @@ export interface StoreSummary {
   store_id: string;
   store_name: string;
   city: string;
+  state?: string;
+  postal_code?: string;
+  latitude?: number;
+  longitude?: number;
   pickup_enabled: boolean;
   active: boolean;
 }

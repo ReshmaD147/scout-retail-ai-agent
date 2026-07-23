@@ -7,6 +7,20 @@ import type { ChatResponse } from "./types/chat";
 // These tests cover the Step 14 chat flow. Cart networking is tested
 // separately in App.cart.test.tsx, so isolate it here to keep the chat
 // fetch assertions focused on /chat/stream and /chat only.
+
+vi.mock("./hooks/useCatalogFilters", () => ({
+  useCatalogFilters: () => ({
+    options: {
+      max_price: 250,
+      categories: ["Footwear", "Electronics", "Home and Kitchen"],
+      product_types: { Footwear: ["Work"], Electronics: ["Earbuds"], "Home and Kitchen": ["Coffee Makers"] },
+      attributes: [],
+    },
+    isLoading: false,
+    errorMessage: null,
+  }),
+}));
+
 vi.mock("./hooks/useCart", () => ({
   useCart: () => ({
     cart: null,
@@ -214,6 +228,33 @@ describe("Scout shopping interface", () => {
     await screen.findByText("ComfortPro Shift Support");
   });
 
+  it("re-runs the backend recommendation flow with structured filters", async () => {
+    const user = userEvent.setup();
+    fetchMock
+      .mockResolvedValueOnce(makeStreamResponse([finalResponseFrame(1, completedResponse), streamClosedFrame(2)]))
+      .mockResolvedValueOnce(makeStreamResponse([finalResponseFrame(3, completedResponse), streamClosedFrame(4)]));
+
+    render(<App />);
+    await user.type(screen.getByLabelText(/what are you looking for/i), "Wireless earbuds");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    await screen.findByText("ComfortPro Shift Support");
+
+    await user.selectOptions(screen.getByLabelText("Category"), "Electronics");
+    await user.selectOptions(screen.getByLabelText("Product type"), "Earbuds");
+    await user.selectOptions(screen.getByLabelText("Fulfillment"), "delivery");
+    await user.click(screen.getByRole("button", { name: "Apply filters" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const [, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    const body = JSON.parse(init.body as string);
+    expect(body.filters).toEqual(expect.objectContaining({
+      category: "Electronics",
+      product_type: "Earbuds",
+      fulfillment: "delivery",
+      in_stock_only: true,
+    }));
+  });
+
   it("shows a loading state while a request is active (scenario 5)", async () => {
     const user = userEvent.setup();
     fetchMock.mockImplementationOnce(() => new Promise(() => {}));
@@ -244,7 +285,7 @@ describe("Scout shopping interface", () => {
           workflow_id: "wf-1",
           session_id: "s-1",
           label: "Searching the product catalog",
-          data: {},
+          data: { tool_name: "semantic_search_products", node_name: "recommendation_agent" },
           timestamp: "2026-01-01T00:00:01Z",
         }),
         sseFrame("tool_started", 3, {
@@ -253,7 +294,7 @@ describe("Scout shopping interface", () => {
           workflow_id: "wf-1",
           session_id: "s-1",
           label: "Checking Maple Grove inventory",
-          data: {},
+          data: { tool_name: "check_store_inventory", node_name: "inventory_agent" },
           timestamp: "2026-01-01T00:00:02Z",
         }),
         finalResponseFrame(4, completedResponse),
@@ -266,16 +307,49 @@ describe("Scout shopping interface", () => {
     await user.click(screen.getByRole("button", { name: "Search" }));
 
     await screen.findByText("ComfortPro Shift Support");
+    await user.click(screen.getByRole("button", { name: "Show progress" }));
 
-    const items = screen.getAllByText(
-      /^(Understanding your request|Searching the product catalog|Checking Maple Grove inventory)$/
+    expect(screen.getByText("Understanding request")).toBeInTheDocument();
+    expect(screen.getByText("Searching catalog")).toBeInTheDocument();
+    expect(screen.getByText("Checking selected store")).toBeInTheDocument();
+    expect(screen.queryByText("Searching the product catalog")).not.toBeInTheDocument();
+  });
+
+  it("deduplicates repeated customer-safe activity events", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockResolvedValueOnce(
+      makeStreamResponse([
+        sseFrame("tool_started", 1, {
+          event_id: 1,
+          event_type: "tool_started",
+          workflow_id: "wf-1",
+          session_id: "s-1",
+          label: "Searching the product catalog",
+          data: { tool_name: "semantic_search_products", node_name: "recommendation_agent" },
+          timestamp: "2026-01-01T00:00:00Z",
+        }),
+        sseFrame("tool_started", 2, {
+          event_id: 2,
+          event_type: "tool_started",
+          workflow_id: "wf-1",
+          session_id: "s-1",
+          label: "Searching the product catalog",
+          data: { tool_name: "semantic_search_products", node_name: "recommendation_agent" },
+          timestamp: "2026-01-01T00:00:01Z",
+        }),
+        finalResponseFrame(3, completedResponse),
+        streamClosedFrame(4),
+      ])
     );
-    const labels = items.map((item) => item.textContent);
-    expect(labels).toEqual([
-      "Understanding your request",
-      "Searching the product catalog",
-      "Checking Maple Grove inventory",
-    ]);
+
+    render(<App />);
+    await user.type(screen.getByLabelText(/what are you looking for/i), ACCEPTANCE_QUERY);
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    await screen.findByText("ComfortPro Shift Support");
+    await user.click(screen.getByRole("button", { name: "Show progress" }));
+
+    expect(screen.getAllByText("Searching catalog")).toHaveLength(1);
+    expect(screen.queryByText("Searching the product catalog")).not.toBeInTheDocument();
   });
 
   it("shows the clarification state (scenario 11)", async () => {
@@ -449,6 +523,82 @@ describe("Scout shopping interface", () => {
     expect(await screen.findByText("ShiftEase All-Day Work Shoe")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "View at retailer" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add to cart" })).not.toBeInTheDocument();
+  });
+
+  it("renders the Step 17 order-status result from chat", async () => {
+    const user = userEvent.setup();
+    const orderResponse: ChatResponse = {
+      ...completedResponse,
+      answer: "Order 123e4567-e89b-42d3-a456-426614174000 is confirmed.",
+      products: [],
+      fulfillment_options: [],
+      order: {
+        order_id: "123e4567-e89b-42d3-a456-426614174000",
+        session_id: "s-1",
+        order_status: "confirmed",
+        created_at: "2026-07-22T12:00:00Z",
+        items: [
+          {
+            order_item_id: "item-1",
+            product_id: "FTW-004",
+            product_name: "ComfortPro Shift Support",
+            brand: "ComfortPro",
+            quantity: 1,
+            charged_unit_price: 89.99,
+            line_total: 89.99,
+          },
+        ],
+        subtotal: 89.99,
+        discount_total: 0,
+        tax_total: 7.2,
+        shipping_total: 0,
+        total: 97.19,
+        currency: "USD",
+        payment: {
+          status: "succeeded",
+          provider: "mock",
+          provider_reference: "mock-ref",
+          amount: 97.19,
+          currency: "USD",
+          paid_at: "2026-07-22T12:00:00Z",
+        },
+        fulfillment: {
+          fulfillment_type: "pickup",
+          status: "processing",
+          store_id: "STR-002",
+          store_name: "Scout Demo Store - Plymouth",
+          shipping_address: null,
+          estimated_ready_at: "2026-07-22T14:00:00Z",
+          estimated_delivery_at: null,
+          estimate_source: "configured_policy",
+          tracking: {
+            available: false,
+            carrier_name: null,
+            tracking_number: null,
+            tracking_url: null,
+            message: "Tracking is not used for pickup orders.",
+          },
+        },
+        eligibility: {
+          cancellation: { eligible: true, reason: "Within the cancellation window.", deadline: null },
+          return_eligibility: { eligible: false, reason: "Not completed yet.", deadline: null },
+          exchange: { eligible: false, reason: "Not completed yet.", deadline: null },
+        },
+      },
+    };
+    fetchMock.mockResolvedValueOnce(
+      makeStreamResponse([finalResponseFrame(1, orderResponse), streamClosedFrame(2)])
+    );
+
+    render(<App />);
+    await user.type(screen.getByLabelText(/what are you looking for/i), "Where is my order?");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(await screen.findByRole("heading", { name: "Your order is confirmed" })).toBeInTheDocument();
+    expect(screen.getByText("Order #14174000")).toBeInTheDocument();
+    expect(screen.getByText("ComfortPro Shift Support")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Pickup summary" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /cancel|return|exchange/i })).not.toBeInTheDocument();
   });
 
   it("exposes accessibility labels and live regions (scenario 19)", async () => {

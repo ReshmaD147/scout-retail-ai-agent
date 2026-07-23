@@ -52,6 +52,32 @@ _CATEGORY_KEYWORDS = {
     "fridge": "Home and Kitchen",
 }
 
+_SUBCATEGORY_KEYWORDS = [
+    ("hiking backpack", "Hiking Backpack"),
+    ("wireless earbuds", "Earbuds"),
+    ("coffee makers", "Coffee Makers"),
+    ("coffee maker", "Coffee Makers"),
+    ("work shoes", "Work"),
+    ("work shoe", "Work"),
+    ("running shoes", "Running"),
+    ("running shoe", "Running"),
+    ("hiking boots", "Hiking"),
+    ("hiking boot", "Hiking"),
+    ("earbuds", "Earbuds"),
+    ("earbud", "Earbuds"),
+    ("power bank", "Chargers & Power"),
+    ("speaker", "Speakers"),
+    ("tablet", "Tablets"),
+    ("kettle", "Kettles"),
+    ("lamp", "Lighting"),
+    ("mini fridge", "Small Appliances"),
+    ("fridge", "Small Appliances"),
+    ("backpack", "Backpack"),
+    ("duffel", "Duffel"),
+    ("tote", "Tote"),
+    ("briefcase", "Briefcase"),
+]
+
 _DESCRIPTOR_KEYWORDS = [
     "work",
     "running",
@@ -75,6 +101,29 @@ _LOCATION_PATTERN = re.compile(
     r"\bnear\s+([A-Za-z][A-Za-z\s]*?)(?=[.,!?]|\s+that\b|\s+today\b|$)", re.IGNORECASE
 )
 _PICKUP_PATTERN = re.compile(r"pick[\s-]?up", re.IGNORECASE)
+_ORDER_ID_PATTERN = re.compile(
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
+    re.IGNORECASE,
+)
+_ORDER_REQUEST_PATTERN = re.compile(
+    r"\b(order|tracking|track|payment status|where is my order|cancel|cancellation|return|exchange)\b",
+    re.IGNORECASE,
+)
+_DEALS_PATTERN = re.compile(r"\b(deal|deals|discount|discounted|sale|promotion|promotions)\b", re.IGNORECASE)
+
+
+def _extract_order_action(query_lower: str) -> str:
+    if "cancel" in query_lower:
+        return "cancel_eligibility"
+    if "return" in query_lower:
+        return "return_eligibility"
+    if "exchange" in query_lower:
+        return "exchange_eligibility"
+    if "payment" in query_lower:
+        return "payment_status"
+    if "track" in query_lower or "where is" in query_lower:
+        return "tracking"
+    return "status"
 
 
 def _extract_category(query_lower: str) -> Optional[str]:
@@ -88,6 +137,13 @@ def _extract_keyword(query_lower: str) -> Optional[str]:
     for word in _DESCRIPTOR_KEYWORDS:
         if word in query_lower:
             return word
+    return None
+
+
+def _extract_subcategory(query_lower: str) -> Optional[str]:
+    for phrase, subcategory in _SUBCATEGORY_KEYWORDS:
+        if phrase in query_lower:
+            return subcategory
     return None
 
 
@@ -124,10 +180,27 @@ def understand_request_node(state: RetailGraphState) -> Dict[str, Any]:
     query = state.customer_query
     query_lower = query.lower()
 
+    if _ORDER_REQUEST_PATTERN.search(query_lower):
+        order_match = _ORDER_ID_PATTERN.search(query)
+        return {
+            "step_count": state.step_count + 1,
+            "intent": {
+                "request_type": "order",
+                "order_id": order_match.group(0).lower() if order_match else None,
+                "order_action": _extract_order_action(query_lower),
+            },
+        }
+
     intent: Dict[str, Any] = {
+        "request_type": "recommendation",
         "category": _extract_category(query_lower),
+        "subcategory": _extract_subcategory(query_lower),
         "keyword": _extract_keyword(query_lower),
         "max_price": _extract_max_price(query),
+        "attribute_filters": [],
+        "deals_only": bool(_DEALS_PATTERN.search(query_lower)),
+        "in_stock_only": True,
+        "fulfillment": None,
         "pickup_requested": _extract_pickup_requested(query),
         "location_text": _extract_location_text(query),
         "selected_store_id": None,
@@ -136,6 +209,24 @@ def understand_request_node(state: RetailGraphState) -> Dict[str, Any]:
         "selected_store_longitude": None,
         "location_resolved": False,
     }
+
+    # API filters are already validated by ChatRequest. They are hard
+    # customer constraints and therefore override any looser value
+    # extracted from the natural-language message.
+    requested_filters = state.requested_filters or {}
+    if requested_filters.get("category") is not None:
+        intent["category"] = requested_filters["category"]
+    if requested_filters.get("product_type") is not None:
+        intent["subcategory"] = requested_filters["product_type"]
+    if requested_filters.get("max_price") is not None:
+        intent["max_price"] = requested_filters["max_price"]
+    if requested_filters.get("attributes"):
+        intent["attribute_filters"] = list(requested_filters["attributes"])
+    if "in_stock_only" in requested_filters:
+        intent["in_stock_only"] = bool(requested_filters["in_stock_only"])
+    if requested_filters.get("fulfillment") is not None:
+        intent["fulfillment"] = requested_filters["fulfillment"]
+        intent["pickup_requested"] = requested_filters["fulfillment"] == "pickup"
 
     evidence: List[EvidenceEntry] = []
     errors: List[WorkflowError] = []

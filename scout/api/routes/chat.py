@@ -48,18 +48,25 @@ import logging
 import sqlite3
 import time
 import uuid
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends
 from langchain_core.messages import HumanMessage
 
 from scout.api.dependencies import get_compiled_graph
 from scout.api.exceptions import ScoutAppError
-from scout.api.schemas.chat import ChatError, ChatRequest, ChatResponse, FulfillmentOption
+from scout.api.schemas.chat import (
+    ChatError,
+    ChatRequest,
+    ChatResponse,
+    FulfillmentOption,
+    RequestedLocation,
+)
 from scout.config import get_settings
 from scout.orchestration import events as safe_events
 from scout.orchestration.state import RetailGraphState
 from scout.repositories.recommendation_reference_repository import RecommendationReferenceRepository
+from scout.services.order_service import OrderStatusView
 
 logger = logging.getLogger(__name__)
 
@@ -102,6 +109,9 @@ def build_initial_state(request: ChatRequest, workflow_id: str) -> Dict[str, Any
         "messages": [HumanMessage(content=customer_query)],
         "requested_store_id": request.store_id,
         "location": request.location,
+        "requested_filters": (
+            request.filters.model_dump(exclude_none=True) if request.filters is not None else None
+        ),
         "intent": None,
         "goal": None,
         "plan": [],
@@ -149,7 +159,7 @@ def _map_workflow_status(state: RetailGraphState) -> str:
     if state.workflow_status in ("failed", "stopped_at_limit"):
         return "failed"
     if state.workflow_status == "completed":
-        return "completed" if (state.product_candidates or state.external_offers) else "no_results"
+        return "completed" if (state.product_candidates or state.external_offers or state.order_context) else "no_results"
     # "in_progress" should never reach here - the graph always resolves
     # to a terminal or paused status. Treated as a safe failure rather
     # than ever silently claiming success on an unfinished workflow.
@@ -162,7 +172,11 @@ def _build_fulfillment_options(state: RetailGraphState) -> List[FulfillmentOptio
     fresh, unverified query made by the route itself."""
     options: List[FulfillmentOption] = []
     for entry in state.inventory_results:
-        if entry.get("sellable_quantity", 0) <= 0:
+        # Keep a checked selected store even when unavailable so the UI
+        # can honestly show "requested store: out of stock" beside the
+        # verified nearby/delivery fallback. Other zero-quantity rows are
+        # internal dead ends and stay out of the public response.
+        if entry.get("sellable_quantity", 0) <= 0 and entry.get("channel") != "selected_store":
             continue
         options.append(
             FulfillmentOption(
@@ -178,6 +192,16 @@ def _build_fulfillment_options(state: RetailGraphState) -> List[FulfillmentOptio
             )
         )
     return options
+
+
+def _build_requested_location(state: RetailGraphState) -> Optional[RequestedLocation]:
+    intent = state.intent or {}
+    latitude = intent.get("selected_store_latitude")
+    longitude = intent.get("selected_store_longitude")
+    label = intent.get("location_text") or intent.get("selected_store_name")
+    if latitude is None or longitude is None or not label:
+        return None
+    return RequestedLocation(label=str(label), latitude=float(latitude), longitude=float(longitude))
 
 
 def _build_chat_errors(state: RetailGraphState) -> List[ChatError]:
@@ -196,7 +220,9 @@ def build_chat_response(state: RetailGraphState, workflow_id: str) -> ChatRespon
         answer=state.final_response,
         products=list(state.product_candidates),
         fulfillment_options=_build_fulfillment_options(state),
+        requested_location=_build_requested_location(state),
         external_offers=list(state.external_offers),
+        order=(OrderStatusView.model_validate(state.order_context) if state.order_context else None),
         activity_events=_build_activity_events(state),
         errors=_build_chat_errors(state),
     )

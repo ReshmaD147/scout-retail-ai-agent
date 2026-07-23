@@ -174,7 +174,9 @@ def test_internal_inventory_exhaustion_returns_external_offers(client):
     assert response.status_code == 200
     assert body["status"] == "completed"
     assert body["products"] == []
-    assert body["fulfillment_options"] == []
+    assert len(body["fulfillment_options"]) == 1
+    assert body["fulfillment_options"][0]["channel"] == "selected_store"
+    assert body["fulfillment_options"][0]["sellable_quantity"] == 0
     assert body["external_offers"]
     assert all(offer["match_type"] == "similar" for offer in body["external_offers"])
     assert all("merchant_url" not in offer for offer in body["external_offers"])

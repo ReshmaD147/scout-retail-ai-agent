@@ -13,6 +13,7 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Dict, List, Optional, Tuple
 
@@ -628,6 +629,18 @@ def confirm_checkout(
         for allocation in allocations
     ]
 
+    confirmed_at = datetime.now(timezone.utc)
+    estimated_ready_at = (
+        (confirmed_at + timedelta(minutes=settings.order_pickup_ready_minutes)).isoformat()
+        if current_review.fulfillment_type == "pickup"
+        else None
+    )
+    estimated_delivery_at = (
+        (confirmed_at + timedelta(days=settings.standard_delivery_max_days)).isoformat()
+        if current_review.fulfillment_type == "delivery"
+        else None
+    )
+
     plan = CheckoutCommitPlan(
         checkout_id=checkout_id,
         session_id=session_id,
@@ -656,6 +669,8 @@ def confirm_checkout(
         shipping_total=current_review.shipping_total,
         total=current_review.total,
         currency=current_review.currency,
+        estimated_ready_at=estimated_ready_at,
+        estimated_delivery_at=estimated_delivery_at,
         items=order_item_writes,
         reservations=reservation_writes,
     )

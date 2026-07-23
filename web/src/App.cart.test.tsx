@@ -163,6 +163,20 @@ function routeFetch(handlers: Array<{ match: (url: string, init?: RequestInit) =
   });
 }
 
+
+vi.mock("./hooks/useCatalogFilters", () => ({
+  useCatalogFilters: () => ({
+    options: {
+      max_price: 250,
+      categories: ["Footwear", "Electronics", "Home and Kitchen"],
+      product_types: { Footwear: ["Work"], Electronics: ["Earbuds"], "Home and Kitchen": ["Coffee Makers"] },
+      attributes: [],
+    },
+    isLoading: false,
+    errorMessage: null,
+  }),
+}));
+
 describe("Scout cart UI", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -226,7 +240,7 @@ describe("Scout cart UI", () => {
     render(<App />);
 
     await waitFor(() => expect(screen.getByLabelText("1 item in cart")).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: /cart/i }));
+    await user.click(screen.getByRole("button", { name: /^open cart,/i }));
 
     const drawer = await screen.findByRole("dialog", { name: "Shopping cart" });
     await user.click(within(drawer).getByLabelText(/increase quantity of comfortpro/i));

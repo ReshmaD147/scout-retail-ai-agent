@@ -143,6 +143,16 @@ class Settings(BaseSettings):
     by the Step 16.5 fallback. External retrieval is a recovery path, not an
     unlimited marketplace feed, so the default stays aligned with Scout's
     three-result recommendation interface."""
+    order_pickup_ready_minutes: int = Field(default=120, ge=0)
+    """Prototype estimate for when a newly confirmed pickup order will be ready.
+    This is a configured policy estimate, not a live store promise."""
+    order_cancellation_window_minutes: int = Field(default=60, ge=0)
+    """Read-only Step 17 eligibility window. Scout reports whether an order
+    appears eligible; it never performs the cancellation in this phase."""
+    order_return_window_days: int = Field(default=30, ge=0)
+    """Read-only return eligibility window after delivery or pickup."""
+    order_exchange_window_days: int = Field(default=30, ge=0)
+    """Read-only exchange eligibility window after delivery or pickup."""
 
     model_config = SettingsConfigDict(
         env_file=".env",

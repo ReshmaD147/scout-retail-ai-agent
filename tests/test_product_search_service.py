@@ -105,3 +105,26 @@ def test_does_not_pad_results_below_the_similarity_floor(monkeypatch):
 
     assert len(outcome.products) < 10  # never padded up to the full Footwear pool
     get_settings.cache_clear()
+
+def test_exact_subcategory_filter_excludes_other_electronics():
+    outcome = search_products_by_meaning(
+        "Wireless earbuds",
+        category="Electronics",
+        subcategory="Earbuds",
+        provider=_provider(),
+    )
+    assert outcome.products
+    assert {product.product_id for product in outcome.products} == {"ELE-001", "ELE-007"}
+    assert all(product.subcategory == "Earbuds" for product in outcome.products)
+
+
+def test_deals_only_requires_a_current_promotion_and_exact_product_type():
+    outcome = search_products_by_meaning(
+        "Coffee maker deals",
+        category="Home and Kitchen",
+        subcategory="Coffee Makers",
+        deals_only=True,
+        provider=_provider(),
+    )
+    assert [product.product_id for product in outcome.products] == ["HOM-001"]
+    assert all(product.subcategory == "Coffee Makers" for product in outcome.products)

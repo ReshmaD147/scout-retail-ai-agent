@@ -60,7 +60,8 @@ in `.env`, default `data/scout.db`). Run these from the repo root, with
 the virtual environment active.
 
 Initialize the schema (creates catalog, inventory, cart, semantic-search,
-checkout, payment, order, and reservation tables — safe to run repeatedly):
+checkout, payment, order, reservation, fulfillment-tracking, and affiliate
+tables — safe to run repeatedly):
 
 ```bash
 python -m scout.database.initialize
@@ -197,6 +198,8 @@ understand_request            (scout/agents/understand_request.py)
   v
 supervisor                    (scout/orchestration/supervisor.py)
   |
+  |-- order request --> order_agent --> END              (Step 17 read-only status)
+  |
   |-- route_from_supervisor --> END                      (vague request: awaiting_clarification)
   |
   v
@@ -248,6 +251,10 @@ END
 - `recommendation_agent` - calls the approved `search_products` and
   `rank_products` MCP tools to build an initial, budget-enforced,
   ranked candidate set.
+- `order_agent` - for order-status requests, calls approved read-only
+  MCP order tools and returns persisted order, payment, fulfillment,
+  tracking, estimate, and eligibility facts. It never runs SQL or
+  performs a cancellation, return, exchange, or refund.
 - `inventory_agent` - checks every candidate's stock at the customer's
   selected store (`check_store_inventory`).
 - `availability_evaluation` - calls no tool; it is the deterministic
@@ -676,6 +683,72 @@ New Step 16.5 modules include:
 - `web/src/components/ExternalOfferCard.tsx`
 - `web/src/components/ExternalOfferGrid.tsx`
 
+## Read-only Order Agent (Step 17)
+
+Step 17 reuses the immutable orders, order items, payments, and inventory
+reservations created by Step 16. It adds a separate `order_fulfillments` table
+for status, pickup/delivery estimates, carrier tracking, and completion
+timestamps. Existing Step 16 orders without a fulfillment row receive a safe
+configured estimate instead of invented tracking data.
+
+The Supervisor recognizes order requests and routes them through the bounded
+LangGraph workflow:
+
+```text
+Customer asks about an order
+→ understand_request extracts order ID/action
+→ supervisor routes to order_agent
+→ order_agent calls approved MCP tools
+→ read-only order status is returned
+```
+
+Supported read-only capabilities:
+
+- Lookup an explicit order ID or the latest order in the current session.
+- Report order and mock-payment status.
+- Report pickup store or delivery address and estimated readiness/arrival.
+- Show carrier/tracking facts only when they are persisted.
+- Evaluate cancellation, return, and exchange eligibility using configured,
+  deterministic windows.
+
+No protected action is executed in this phase. Eligibility output explicitly
+states that no cancellation, return, exchange, or refund was performed. Orders
+are session-isolated: an order ID alone is insufficient without the matching
+shopping session.
+
+### Order API
+
+```text
+GET /orders/latest?session_id=...
+GET /orders/{order_id}?session_id=...
+GET /orders/{order_id}/status?session_id=...
+GET /orders/{order_id}/payment?session_id=...
+GET /orders/{order_id}/fulfillment?session_id=...
+GET /orders/{order_id}/eligibility?session_id=...
+```
+
+The same path is available through chat. After completing mock checkout in the
+React app, ask **Where is my order?** in the same session to see the Step 17
+order-status card.
+
+Configuration:
+
+```text
+ORDER_PICKUP_READY_MINUTES=120
+ORDER_CANCELLATION_WINDOW_MINUTES=60
+ORDER_RETURN_WINDOW_DAYS=30
+ORDER_EXCHANGE_WINDOW_DAYS=30
+```
+
+New Step 17 modules include:
+
+- `scout/repositories/order_repository.py`
+- `scout/services/order_service.py`
+- `scout/mcp/order_tools.py`
+- `scout/agents/order_agent.py`
+- `scout/api/routes/orders.py`
+- `web/src/components/OrderStatusCard.tsx`
+
 ## Run tests
 
 ```bash
@@ -714,6 +787,7 @@ Retail_AI_Agent/
 │   │   │                       # rank_products, find_similar_products
 │   │   ├── inventory_tools.py  # selected, nearby, network, pickup/delivery, substitutes
 │   │   ├── affiliate_tools.py  # external search, offer verification, click tracking
+│   │   ├── order_tools.py      # read-only order/payment/fulfillment/eligibility tools
 │   │   ├── summaries.py        # Shared Product -> ProductSummary mapping
 │   │   ├── store_tools.py      # find_store_by_location - resolves free-text -> real store
 │   │   ├── schemas.py          # Structured input/output models for every tool
@@ -723,6 +797,7 @@ Retail_AI_Agent/
 │   │   ├── recommendation_agent.py   # search/rank candidates; drop-unfulfillable + rerank
 │   │   ├── inventory_agent.py        # selected / nearby / delivery / substitute fulfillment
 │   │   ├── external_offer_agent.py   # bounded mock merchant fallback
+│   │   ├── order_agent.py            # read-only order-status specialist
 │   │   └── response_verification.py  # internal and external grounding verification
 │   └── orchestration/
 │       ├── state.py                 # RetailGraphState - shared LangGraph state (Step 8/11)
@@ -739,7 +814,22 @@ Retail_AI_Agent/
 
 ## Not included yet
 
-A real payment provider, real retailer/affiliate APIs, the Order Agent, Customer
-Support Agent, refunds, cancellations, durable memory, and production
-authentication are still out of scope. Step 16 uses a local mock payment adapter;
-Step 16.5 uses synthetic external offers and fictional demo retailers only.
+A real payment provider, real retailer/affiliate APIs, Customer Support Agent,
+protected cancellation/return/exchange/refund execution, durable memory, and
+production authentication are still out of scope. Step 16 uses a local mock
+payment adapter; Step 16.5 uses synthetic external offers and fictional demo
+retailers; Step 17 reports order facts and eligibility only.
+
+## Premium React UI redesign
+
+The Step 17 frontend now uses a responsive premium three-column shopping layout inspired by the supplied Scout reference. It adds a quiet navigation sidebar, premium search and suggestion chips, a deduplicated workflow timeline, equal-height product cards, a verified fulfillment summary, real cart count/subtotal, responsive mobile navigation, and accessible loading/error states.
+
+The redesign changes presentation only. FastAPI, LangGraph, MCP, SSE, inventory, affiliate fallback, checkout, and Order Agent business behavior remain in their existing backend layers. Saved-product persistence remains explicitly unavailable. Deals and Categories run verified Scout searches, and the filter panel now reruns the backend workflow with structured constraints.
+
+See [`PREMIUM_UI_REDESIGN.md`](PREMIUM_UI_REDESIGN.md) for the component hierarchy, changed files, validation results, and known visual differences from the reference.
+
+## Real map, live workflow, and backend filters
+
+The Step 17 UI now uses stored Scout store coordinates in an interactive Leaflet map, maps real `/chat/stream` events into one deduplicated seven-stage workflow timeline, and reruns the backend graph with structured catalog filters. Recommendation filtering now enforces exact product type, supports fewer than three valid results, requires a current promotion for deal queries, and skips selected-store warnings for non-pickup searches.
+
+See [`REAL_MAP_WORKFLOW_FILTERS.md`](REAL_MAP_WORKFLOW_FILTERS.md) for the API contracts, changed files, validation results, and local test cases.

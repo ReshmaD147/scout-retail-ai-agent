@@ -147,18 +147,45 @@ describe("CartDrawer", () => {
     expect(props.onChooseDelivery).toHaveBeenCalledTimes(1);
   });
 
-  it("calls onChoosePickup with the selected store when a pickup store is chosen", async () => {
+  it("shows the store selector after pickup is selected and calls onChoosePickup", async () => {
     const user = userEvent.setup();
     const props = baseProps();
     render(<CartDrawer {...props} />);
+    expect(screen.queryByLabelText("Pickup store")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("radio", { name: "Pickup" }));
     await user.selectOptions(screen.getByLabelText("Pickup store"), "STR-001");
     expect(props.onChoosePickup).toHaveBeenCalledWith("STR-001");
   });
 
-  it("disables pickup-unavailable stores in the store dropdown", () => {
+  it("disables pickup-unavailable stores in the store dropdown", async () => {
+    const user = userEvent.setup();
     render(<CartDrawer {...baseProps()} />);
+    await user.click(screen.getByRole("radio", { name: "Pickup" }));
     const option = screen.getByRole("option", { name: /no pickup/i }) as HTMLOptionElement;
     expect(option.disabled).toBe(true);
+  });
+
+  it("hides the pickup-store selector while delivery is selected", () => {
+    render(<CartDrawer {...baseProps()} cart={{ ...cart, fulfillment_type: "delivery" }} />);
+    expect(screen.queryByLabelText("Pickup store")).not.toBeInTheDocument();
+  });
+
+  it("explains when pickup stores are unavailable and supports retry", async () => {
+    const user = userEvent.setup();
+    const onRefreshStores = vi.fn();
+    render(
+      <CartDrawer
+        {...baseProps()}
+        stores={[]}
+        storesErrorMessage="Scout could not load pickup locations."
+        onRefreshStores={onRefreshStores}
+      />
+    );
+    await user.click(screen.getByRole("radio", { name: "Pickup" }));
+    expect(screen.getByText(/could not load pickup locations/i)).toBeInTheDocument();
+    expect(screen.getByLabelText("Pickup store")).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Retry pickup locations" }));
+    expect(onRefreshStores).toHaveBeenCalledTimes(1);
   });
 
   it("collects a shipping address when delivery is selected", () => {

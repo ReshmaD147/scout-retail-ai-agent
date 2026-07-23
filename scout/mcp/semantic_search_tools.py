@@ -11,7 +11,7 @@ and the rest are unchanged and still used exactly as they were - this
 is an addition, not a replacement.
 """
 
-from typing import Optional
+from typing import List, Optional
 
 from scout.mcp.errors import ToolValidationError
 from scout.mcp.schemas import SemanticSearchProductsResult, ToolError
@@ -28,7 +28,10 @@ def semantic_search_products(
     query_text: str,
     keyword: Optional[str] = None,
     category: Optional[str] = None,
+    subcategory: Optional[str] = None,
     max_price: Optional[float] = None,
+    attributes: Optional[List[str]] = None,
+    deals_only: bool = False,
     limit: int = 20,
 ) -> SemanticSearchProductsResult:
     """Search the catalog for products matching a natural-language query.
@@ -84,7 +87,13 @@ def semantic_search_products(
 
     try:
         outcome = search_products_by_meaning(
-            query_text=query_text, keyword=keyword, category=category, max_price=max_price
+            query_text=query_text,
+            keyword=keyword,
+            category=category,
+            subcategory=subcategory,
+            max_price=max_price,
+            attributes=attributes,
+            deals_only=deals_only,
         )
     except EmbeddingUnavailableError as exc:
         return SemanticSearchProductsResult(

@@ -22,4 +22,5 @@ def product_to_summary(product: Product) -> ProductSummary:
         rating=product.rating,
         review_count=product.review_count,
         active=product.active,
+        attributes=product.attributes,
     )

@@ -69,6 +69,7 @@ FTW_010 = _product("FTW-010", "TrailMax CanyonGuard Boot", 129.99, subcategory="
 def test_products_needing_fulfillment_finds_unfulfilled_candidates():
     state = _state(
         product_candidates=[FTW_004, FTW_010],
+        intent={"selected_store_id": "STR-001"},
         inventory_results=[{"product_id": "FTW-004", "sellable_quantity": 7}],
     )
 
@@ -106,13 +107,14 @@ def test_no_candidates_is_a_no_op():
     assert update["tool_results"][0].summary == "no candidates to check"
 
 
-def test_missing_selected_store_records_a_not_found_error():
-    state = _state(product_candidates=[FTW_004], intent={})
+def test_missing_selected_store_skips_pickup_without_a_customer_warning():
+    state = _state(product_candidates=[FTW_004], intent={"pickup_requested": False})
 
     update = inventory_agent_node(state)
 
-    assert update["errors"][0].error_type == "not_found"
-    assert update["tool_results"][0].status == "error"
+    assert "errors" not in update
+    assert update["tool_results"][0].status == "success"
+    assert "not requested" in update["tool_results"][0].summary
 
 
 def test_a_database_error_is_recorded_and_does_not_crash(monkeypatch):
@@ -146,6 +148,7 @@ def test_inventory_agent_stops_at_the_step_budget(monkeypatch):
 def test_summarizes_how_many_candidates_are_already_fulfilled():
     state = _state(
         product_candidates=[FTW_004, FTW_010],
+        intent={"selected_store_id": "STR-001"},
         inventory_results=[{"product_id": "FTW-004", "sellable_quantity": 7}],
     )
 

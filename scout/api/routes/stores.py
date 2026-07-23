@@ -28,6 +28,10 @@ def list_stores() -> List[StoreSummary]:
             store_id=store.store_id,
             store_name=store.store_name,
             city=store.city,
+            state=store.state,
+            postal_code=store.postal_code,
+            latitude=store.latitude,
+            longitude=store.longitude,
             pickup_enabled=store.pickup_enabled,
             active=store.active,
         )

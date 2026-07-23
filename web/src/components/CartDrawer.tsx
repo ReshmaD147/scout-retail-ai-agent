@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CheckoutPanel } from "./CheckoutPanel";
 import { useCheckout } from "../hooks/useCheckout";
 import type { CartItemView, CartView, StoreSummary } from "../types/cart";
@@ -10,12 +10,14 @@ export interface CartDrawerProps {
   isLoading: boolean;
   errorMessage: string | null;
   stores: StoreSummary[];
+  storesErrorMessage?: string | null;
   onUpdateQuantity: (cartItemId: string, quantity: number) => void;
   onRemoveItem: (cartItemId: string) => void;
   onClear: () => void;
   onChoosePickup: (storeId: string) => void;
   onChooseDelivery: () => void;
   onDismissError: () => void;
+  onRefreshStores?: () => void;
   sessionId?: string;
   onOrderCompleted?: () => void;
 }
@@ -33,12 +35,14 @@ export function CartDrawer({
   isLoading,
   errorMessage,
   stores,
+  storesErrorMessage,
   onUpdateQuantity,
   onRemoveItem,
   onClear,
   onChoosePickup,
   onChooseDelivery,
   onDismissError,
+  onRefreshStores,
   sessionId,
   onOrderCompleted,
 }: CartDrawerProps): JSX.Element | null {
@@ -106,8 +110,10 @@ export function CartDrawer({
           <FulfillmentSelector
             cart={cart}
             stores={stores}
+            storesErrorMessage={storesErrorMessage}
             onChoosePickup={onChoosePickup}
             onChooseDelivery={onChooseDelivery}
+            onRefreshStores={onRefreshStores}
           />
 
           {cart && <CheckoutPanel cart={cart} checkout={checkout} />}
@@ -176,8 +182,10 @@ function CartItemRow({ item, onUpdateQuantity, onRemove }: CartItemRowProps): JS
 interface FulfillmentSelectorProps {
   cart: CartView | null;
   stores: StoreSummary[];
+  storesErrorMessage?: string | null;
   onChoosePickup: (storeId: string) => void;
   onChooseDelivery: () => void;
+  onRefreshStores?: () => void;
 }
 
 /** Pickup-or-delivery selection, with a store dropdown that only
@@ -186,11 +194,32 @@ interface FulfillmentSelectorProps {
 function FulfillmentSelector({
   cart,
   stores,
+  storesErrorMessage,
   onChoosePickup,
   onChooseDelivery,
+  onRefreshStores,
 }: FulfillmentSelectorProps): JSX.Element {
   const [selectedStoreId, setSelectedStoreId] = useState(cart?.store_id ?? "");
-  const fulfillmentType = cart?.fulfillment_type ?? null;
+  const [selectionMode, setSelectionMode] = useState<"pickup" | "delivery" | null>(
+    cart?.fulfillment_type ?? null
+  );
+
+  useEffect(() => {
+    setSelectedStoreId(cart?.store_id ?? "");
+    setSelectionMode(cart?.fulfillment_type ?? null);
+  }, [cart?.store_id, cart?.fulfillment_type]);
+
+  const choosePickupMode = (): void => {
+    setSelectionMode("pickup");
+    if (selectedStoreId) {
+      onChoosePickup(selectedStoreId);
+    }
+  };
+
+  const chooseDeliveryMode = (): void => {
+    setSelectionMode("delivery");
+    onChooseDelivery();
+  };
 
   return (
     <fieldset className="fulfillment-selector">
@@ -201,8 +230,8 @@ function FulfillmentSelector({
             type="radio"
             name="fulfillment"
             value="pickup"
-            checked={fulfillmentType === "pickup"}
-            onChange={() => selectedStoreId && onChoosePickup(selectedStoreId)}
+            checked={selectionMode === "pickup"}
+            onChange={choosePickupMode}
           />
           Pickup
         </label>
@@ -211,36 +240,54 @@ function FulfillmentSelector({
             type="radio"
             name="fulfillment"
             value="delivery"
-            checked={fulfillmentType === "delivery"}
-            onChange={onChooseDelivery}
+            checked={selectionMode === "delivery"}
+            onChange={chooseDeliveryMode}
           />
           Delivery
         </label>
       </div>
 
-      <label className="fulfillment-selector__store">
-        Pickup store
-        <select
-          value={selectedStoreId}
-          onChange={(event) => {
-            const storeId = event.target.value;
-            setSelectedStoreId(storeId);
-            if (storeId) {
-              onChoosePickup(storeId);
-            }
-          }}
-        >
-          <option value="">Choose a store...</option>
-          {stores.map((store) => (
-            <option key={store.store_id} value={store.store_id} disabled={!store.pickup_enabled}>
-              {store.store_name}
-              {store.pickup_enabled ? "" : " (pickup unavailable)"}
-            </option>
-          ))}
-        </select>
-      </label>
+      {selectionMode === "pickup" && (
+        <>
+          <label className="fulfillment-selector__store">
+            Pickup store
+            <select
+              value={selectedStoreId}
+              disabled={stores.length === 0}
+              onChange={(event) => {
+                const storeId = event.target.value;
+                setSelectedStoreId(storeId);
+                if (storeId) {
+                  onChoosePickup(storeId);
+                }
+              }}
+            >
+              <option value="">Choose a store...</option>
+              {stores.map((store) => (
+                <option key={store.store_id} value={store.store_id} disabled={!store.pickup_enabled}>
+                  {store.store_name}
+                  {store.pickup_enabled ? "" : " (pickup unavailable)"}
+                </option>
+              ))}
+            </select>
+          </label>
+          {stores.length === 0 && (
+            <div className="fulfillment-selector__store-error" role="status">
+              <p className="fulfillment-selector__error">
+                {storesErrorMessage ?? "Pickup locations are temporarily unavailable. Delivery is still available."}
+              </p>
+              {onRefreshStores && (
+                <button type="button" onClick={onRefreshStores}>Retry pickup locations</button>
+              )}
+            </div>
+          )}
+          {stores.length > 0 && !selectedStoreId && (
+            <p className="fulfillment-selector__note">Choose an available store to continue with pickup.</p>
+          )}
+        </>
+      )}
 
-      {fulfillmentType === "delivery" && (
+      {selectionMode === "delivery" && (
         <p className="fulfillment-selector__note">
           Delivery selected. Enter the shipping address in checkout below.
         </p>

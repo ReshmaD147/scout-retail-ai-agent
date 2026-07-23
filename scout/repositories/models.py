@@ -411,6 +411,26 @@ class InventoryReservationRecord(BaseModel):
         return cls(**dict(row))
 
 
+class OrderFulfillmentRecord(BaseModel):
+    """Mutable fulfillment facts attached to an immutable Step 16 order."""
+
+    order_id: str
+    fulfillment_status: str
+    carrier_name: Optional[str]
+    tracking_number: Optional[str]
+    tracking_url: Optional[str]
+    estimated_ready_at: Optional[str]
+    estimated_delivery_at: Optional[str]
+    shipped_at: Optional[str]
+    delivered_at: Optional[str]
+    picked_up_at: Optional[str]
+    updated_at: str
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "OrderFulfillmentRecord":
+        return cls(**dict(row))
+
+
 class ExternalOfferRecord(BaseModel):
     """One synthetic merchant offer from Step 16.5's mock feed."""
 

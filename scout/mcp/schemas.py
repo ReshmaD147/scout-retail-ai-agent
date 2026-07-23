@@ -13,7 +13,7 @@ caller can branch on, the same shape every time.
 
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from scout.services.cart_service import CartView
 from scout.services.checkout_service import CheckoutReview, OrderConfirmation
@@ -40,6 +40,7 @@ class ProductSummary(BaseModel):
     rating: Optional[float]
     review_count: int
     active: bool
+    attributes: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ProductDetail(ProductSummary):
@@ -392,4 +393,44 @@ class GetExternalOfferResult(BaseModel):
 class TrackAffiliateClickResult(BaseModel):
     click_id: Optional[str] = None
     redirect_url: Optional[str] = None
+    error: Optional[ToolError] = None
+
+# ---------------------------------------------------------------------------
+# Read-only Order Agent tools (Step 17).
+# ---------------------------------------------------------------------------
+
+from scout.services.order_service import (
+    FulfillmentStatus,
+    OrderEligibility,
+    OrderStatusView,
+    PaymentStatus,
+)
+
+
+class OrderToolResult(BaseModel):
+    order: Optional[OrderStatusView] = None
+    error: Optional[ToolError] = None
+
+
+class OrderStatusToolResult(BaseModel):
+    order_id: Optional[str] = None
+    order_status: Optional[str] = None
+    error: Optional[ToolError] = None
+
+
+class PaymentStatusToolResult(BaseModel):
+    order_id: Optional[str] = None
+    payment: Optional[PaymentStatus] = None
+    error: Optional[ToolError] = None
+
+
+class FulfillmentStatusToolResult(BaseModel):
+    order_id: Optional[str] = None
+    fulfillment: Optional[FulfillmentStatus] = None
+    error: Optional[ToolError] = None
+
+
+class OrderEligibilityToolResult(BaseModel):
+    order_id: Optional[str] = None
+    eligibility: Optional[OrderEligibility] = None
     error: Optional[ToolError] = None

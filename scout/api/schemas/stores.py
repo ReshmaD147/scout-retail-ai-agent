@@ -13,5 +13,9 @@ class StoreSummary(BaseModel):
     store_id: str
     store_name: str
     city: str
+    state: str
+    postal_code: str
+    latitude: float
+    longitude: float
     pickup_enabled: bool
     active: bool

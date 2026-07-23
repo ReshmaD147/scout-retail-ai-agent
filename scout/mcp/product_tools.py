@@ -63,7 +63,6 @@ def _to_detail(product: Product) -> ProductDetail:
     return ProductDetail(
         **product_to_summary(product).model_dump(),
         description=product.description,
-        attributes=product.attributes,
         image_url=product.image_url,
         created_at=product.created_at,
         updated_at=product.updated_at,

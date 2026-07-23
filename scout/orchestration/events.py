@@ -25,8 +25,10 @@ from typing import Dict, List, Optional, Tuple
 from scout.orchestration.state import ToolCallTrace
 
 TOOL_LABELS: Dict[str, str] = {
+    "semantic_search_products": "Searching the product catalog",
     "search_products": "Searching the product catalog",
     "rank_products": "Ranking matching products",
+    "get_promotions": "Verifying active promotions",
     "check_store_inventory": "Checking your selected store's inventory",
     "availability_evaluation": "Comparing fulfillment options",
     "find_nearby_inventory": "Searching nearby stores",
@@ -34,6 +36,12 @@ TOOL_LABELS: Dict[str, str] = {
     "get_delivery_estimate": "Estimating delivery options",
     "find_available_substitutes": "Finding available substitutes",
     "search_external_offers": "Searching external retailers",
+    "lookup_order": "Looking up your order",
+    "lookup_latest_order": "Looking up your latest order",
+    "get_order_status": "Checking order status",
+    "get_payment_status": "Checking payment status",
+    "get_fulfillment_details": "Checking fulfillment and tracking",
+    "check_order_eligibility": "Checking order eligibility",
     "get_external_offer_details": "Verifying external retailer offers",
     "get_product_details": "Verifying product details",
     "response_verification": "Verifying product details",
@@ -62,10 +70,9 @@ NEXT_AGENT_LABELS: Dict[str, str] = {
 }
 """The Supervisor's `next_agent` decision string (scout/orchestration/
 supervisor.py) -> a customer-safe label for the "agent_selected"
-event. Only "recommendation" is reachable by today's graph (see
-scout/orchestration/graph.py's module docstring) - the rest are kept
-for forward compatibility with future specialist agents, and are
-simply never emitted today."""
+event. "recommendation" and Step 17's read-only "order" destination are
+reachable today. The remaining labels stay ready for later specialist
+agents and are not emitted until those graph nodes exist."""
 
 
 def label_for_tool(tool_name: str, node_name: Optional[str] = None) -> Optional[str]:

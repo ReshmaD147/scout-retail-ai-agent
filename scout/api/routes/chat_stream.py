@@ -186,14 +186,34 @@ def _events_for_delta(
             continue
 
         if node_name == "response_verification":
-            produced.append(make("verification_started", label, {"tool_name": trace.tool_name}))
             produced.append(
-                make("verification_completed", label, {"tool_name": trace.tool_name, "status": trace.status})
+                make(
+                    "verification_started",
+                    label,
+                    {"tool_name": trace.tool_name, "node_name": node_name},
+                )
+            )
+            produced.append(
+                make(
+                    "verification_completed",
+                    label,
+                    {"tool_name": trace.tool_name, "node_name": node_name, "status": trace.status},
+                )
             )
         else:
-            produced.append(make("tool_started", label, {"tool_name": trace.tool_name}))
             produced.append(
-                make("tool_completed", label, {"tool_name": trace.tool_name, "status": trace.status})
+                make(
+                    "tool_started",
+                    label,
+                    {"tool_name": trace.tool_name, "node_name": node_name},
+                )
+            )
+            produced.append(
+                make(
+                    "tool_completed",
+                    label,
+                    {"tool_name": trace.tool_name, "node_name": node_name, "status": trace.status},
+                )
             )
 
     if node_name == "response_verification" and delta.get("workflow_status") == "in_progress":

@@ -71,6 +71,20 @@ _NO_RESULTS_MESSAGE = (
     "within your budget and location. You may want to try a different budget, category, or store."
 )
 
+
+def _no_results_message(intent: Dict[str, Any]) -> str:
+    if intent.get("deals_only"):
+        return (
+            "I couldn't find an available product matching your category and filters "
+            "with a verified active promotion right now."
+        )
+    if intent.get("pickup_requested"):
+        return _NO_RESULTS_MESSAGE
+    return (
+        "I couldn't find an available product matching your request and filters. "
+        "Try changing the product type, budget, or features."
+    )
+
 _CHANNEL_TO_EVIDENCE_SOURCE = {
     "selected_store": "check_store_inventory",
     "nearby_store": "find_nearby_inventory",
@@ -302,17 +316,36 @@ def _verify_promotion_claims(product_id: str, evidence: List[EvidenceEntry]) -> 
     return issues
 
 
-def _build_final_response(verified: List[Tuple[ProductSummary, Dict[str, Any]]]) -> str:
+def _promotion_label(product_id: str, evidence: List[EvidenceEntry]) -> Optional[str]:
+    for entry in evidence:
+        if entry.source == "get_promotions" and entry.data.get("product_id") == product_id:
+            label = entry.data.get("label")
+            if label:
+                return str(label)
+    return None
+
+
+def _build_final_response(
+    verified: List[Tuple[ProductSummary, Dict[str, Any]]],
+    evidence: List[EvidenceEntry],
+) -> str:
     lines = []
     for candidate, detail in verified:
         store_name = detail.get("store_name", "a nearby Scout store")
         quantity = detail.get("sellable_quantity")
         channel = detail.get("channel")
+        promotion_label = _promotion_label(candidate.product_id, evidence)
+        promotion_sentence = (
+            f" A verified active promotion, {promotion_label}, is available."
+            if promotion_label
+            else ""
+        )
         if channel == "substitute":
             reference = detail.get("substitute_for")
             lines.append(
                 f"{candidate.name} (${candidate.price:.2f}) is offered as a substitute for {reference}, "
                 f"with {quantity} unit(s) available for pickup today at {store_name}."
+                f"{promotion_sentence}"
             )
         elif channel == "delivery":
             minimum_days = detail.get("delivery_min_days")
@@ -320,12 +353,12 @@ def _build_final_response(verified: List[Tuple[ProductSummary, Dict[str, Any]]])
             lines.append(
                 f"{candidate.name} (${candidate.price:.2f}) has {quantity} unit(s) available across "
                 f"the Scout store network. Standard prototype delivery is estimated at "
-                f"{minimum_days}-{maximum_days} days."
+                f"{minimum_days}-{maximum_days} days.{promotion_sentence}"
             )
         else:
             lines.append(
                 f"{candidate.name} (${candidate.price:.2f}) has {quantity} unit(s) available for pickup "
-                f"today at {store_name}."
+                f"today at {store_name}.{promotion_sentence}"
             )
     return " ".join(lines)
 
@@ -572,7 +605,7 @@ def response_verification_node(state: RetailGraphState) -> Dict[str, Any]:
             update["errors"] = external_issues
 
     if not state.product_candidates:
-        update["final_response"] = _NO_RESULTS_MESSAGE
+        update["final_response"] = _no_results_message(state.intent or {})
         update["tool_results"] = [
             ToolCallTrace(
                 tool_name="response_verification", status="success", summary="no fulfillable candidates to verify"
@@ -632,7 +665,7 @@ def response_verification_node(state: RetailGraphState) -> Dict[str, Any]:
         update.update(_request_correction_or_fail(state, issues))
         return update
 
-    final_response = _build_final_response(verified)
+    final_response = _build_final_response(verified, state.evidence)
     unsupported = _final_response_unsupported_claim(final_response, [candidate for candidate, _ in verified])
     if unsupported is not None:
         issues.append(unsupported)

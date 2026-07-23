@@ -86,3 +86,49 @@ def test_stops_at_the_step_budget_without_doing_any_extraction(monkeypatch):
 
     assert update["workflow_status"] == "stopped_at_limit"
     assert update["errors"][0].error_type == "workflow_limit_reached"
+
+
+def test_extracts_order_request_and_uuid_without_product_search():
+    state = _state(
+        customer_query="Track order 123e4567-e89b-42d3-a456-426614174000"
+    )
+    update = understand_request_node(state)
+    assert update["intent"] == {
+        "request_type": "order",
+        "order_id": "123e4567-e89b-42d3-a456-426614174000",
+        "order_action": "tracking",
+    }
+
+
+def test_extracts_exact_product_type_and_deals_constraint():
+    earbuds = understand_request_node(_state(customer_query="Wireless earbuds"))["intent"]
+    assert earbuds["category"] == "Electronics"
+    assert earbuds["subcategory"] == "Earbuds"
+    assert earbuds["deals_only"] is False
+
+    coffee_deals = understand_request_node(_state(customer_query="Coffee maker deals"))["intent"]
+    assert coffee_deals["category"] == "Home and Kitchen"
+    assert coffee_deals["subcategory"] == "Coffee Makers"
+    assert coffee_deals["deals_only"] is True
+
+
+def test_structured_filters_override_looser_natural_language_values():
+    update = understand_request_node(
+        _state(
+            customer_query="Show me electronics",
+            requested_filters={
+                "category": "Electronics",
+                "product_type": "Earbuds",
+                "max_price": 100.0,
+                "attributes": ["connectivity:Bluetooth 5.3"],
+                "in_stock_only": True,
+                "fulfillment": "delivery",
+            },
+        )
+    )
+    intent = update["intent"]
+    assert intent["subcategory"] == "Earbuds"
+    assert intent["max_price"] == 100.0
+    assert intent["attribute_filters"] == ["connectivity:Bluetooth 5.3"]
+    assert intent["pickup_requested"] is False
+    assert intent["fulfillment"] == "delivery"

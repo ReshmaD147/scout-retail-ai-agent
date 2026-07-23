@@ -340,3 +340,32 @@ CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_offer
     ON affiliate_clicks (offer_id, clicked_at);
 CREATE INDEX IF NOT EXISTS idx_affiliate_clicks_session
     ON affiliate_clicks (session_id, clicked_at);
+
+-- Step 17: read-only order status and fulfillment tracking.
+--
+-- `orders` and `order_items` remain the immutable purchase record created by
+-- Step 16. This table holds the fulfillment lifecycle facts that can change
+-- after checkout (processing, ready for pickup, shipped, delivered, picked up)
+-- without rewriting the original order totals or item snapshots. Step 17 only
+-- reads these records; no cancellation, return, exchange, or refund write is
+-- implemented.
+CREATE TABLE IF NOT EXISTS order_fulfillments (
+    order_id               TEXT PRIMARY KEY REFERENCES orders (order_id) ON DELETE CASCADE,
+    fulfillment_status     TEXT NOT NULL DEFAULT 'processing'
+                               CHECK (fulfillment_status IN (
+                                   'processing', 'ready_for_pickup', 'shipped',
+                                   'delivered', 'picked_up'
+                               )),
+    carrier_name           TEXT,
+    tracking_number        TEXT,
+    tracking_url           TEXT,
+    estimated_ready_at     TEXT,
+    estimated_delivery_at  TEXT,
+    shipped_at             TEXT,
+    delivered_at           TEXT,
+    picked_up_at           TEXT,
+    updated_at             TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_order_fulfillments_tracking
+    ON order_fulfillments (tracking_number);

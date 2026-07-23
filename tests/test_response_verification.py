@@ -312,8 +312,16 @@ def test_final_response_check_fails_when_a_verified_candidate_is_missing():
 # ---------------------------------------------------------------------------
 
 
-def test_no_candidates_returns_the_fixed_no_results_message():
-    state = _state(product_candidates=[])
+def test_no_candidates_returns_a_request_appropriate_no_results_message():
+    state = _state(product_candidates=[], intent={"pickup_requested": False})
+
+    update = response_verification_node(state)
+
+    assert "available product matching your request and filters" in update["final_response"]
+
+
+def test_pickup_no_candidates_keeps_the_pickup_specific_message():
+    state = _state(product_candidates=[], intent={"pickup_requested": True})
 
     update = response_verification_node(state)
 

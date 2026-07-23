@@ -4,7 +4,7 @@ response_verification correction loop).
     START
       -> understand_request
       -> supervisor
-      -> [recommendation_agent | END]              (route_from_supervisor)
+      -> [recommendation_agent | order_agent | END] (route_from_supervisor)
       -> inventory_agent
       -> availability_evaluation
       -> [nearby_store_search | reranking]          (route_after_availability)
@@ -45,16 +45,11 @@ both limits were misconfigured.
 
 Why route_from_supervisor's mapping is defensively complete
 ----------------------------------------------------------------
-This graph only has a `recommendation_agent` node - no order or
-support agents yet (this phase explicitly excludes them). Every other
-value `route_from_supervisor` (scout/orchestration/routing.py) could
-ever return - "inventory_agent", "order_agent", "support_agent",
-"verification_agent", or END - is mapped to END here. That keeps this
-specific graph safe even though `route_from_supervisor` is a
-general-purpose function shared with future, larger graphs: if a
-different SupervisorPolicy ever routed somewhere this graph does not
-have a node for, the workflow ends safely instead of LangGraph raising
-a routing error.
+The graph now contains both the recommendation path and Step 17's
+read-only `order_agent`. Unsupported future destinations such as
+`support_agent` still map to END. That keeps the shared routing
+function safe: a policy cannot send this graph to a node that has not
+been implemented yet.
 """
 
 from typing import Any, Dict, Optional
@@ -62,6 +57,7 @@ from typing import Any, Dict, Optional
 from langgraph.graph import END, START, StateGraph
 
 from scout.agents.external_offer_agent import external_offer_fallback_node
+from scout.agents.order_agent import order_agent_node
 from scout.agents.inventory_agent import (
     availability_evaluation_node,
     inventory_agent_node,
@@ -83,7 +79,7 @@ from scout.orchestration.supervisor_policy import SupervisorPolicy
 _SUPERVISOR_ROUTES = {
     "recommendation_agent": "recommendation_agent",
     "inventory_agent": END,
-    "order_agent": END,
+    "order_agent": "order_agent",
     "support_agent": END,
     "verification_agent": END,
     END: END,
@@ -142,6 +138,7 @@ def build_retail_graph(policy: Optional[SupervisorPolicy] = None):
     graph.add_node("understand_request", understand_request_node)
     graph.add_node("supervisor", lambda state: supervisor_node(state, active_policy))
     graph.add_node("recommendation_agent", recommendation_agent_node)
+    graph.add_node("order_agent", order_agent_node)
     graph.add_node("inventory_agent", inventory_agent_node)
     graph.add_node("availability_evaluation", availability_evaluation_node)
     graph.add_node("nearby_store_search", nearby_store_search_node)
@@ -154,6 +151,7 @@ def build_retail_graph(policy: Optional[SupervisorPolicy] = None):
     graph.add_edge(START, "understand_request")
     graph.add_edge("understand_request", "supervisor")
     graph.add_conditional_edges("supervisor", route_from_supervisor, _SUPERVISOR_ROUTES)
+    graph.add_edge("order_agent", END)
     graph.add_edge("recommendation_agent", "inventory_agent")
     graph.add_edge("inventory_agent", "availability_evaluation")
     graph.add_conditional_edges(

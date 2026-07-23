@@ -31,7 +31,7 @@ still valid).
 from typing import Any, Dict
 
 from scout.config import get_settings
-from scout.mcp.product_tools import rank_products
+from scout.mcp.product_tools import get_promotions, rank_products
 from scout.mcp.semantic_search_tools import semantic_search_products
 from scout.orchestration.limits import check_step_budget
 from scout.orchestration.state import EvidenceEntry, RetailGraphState, ToolCallTrace, WorkflowError
@@ -48,7 +48,10 @@ def recommendation_agent_node(state: RetailGraphState) -> Dict[str, Any]:
         query_text=state.customer_query,
         keyword=intent.get("keyword"),
         category=intent.get("category"),
+        subcategory=intent.get("subcategory"),
         max_price=intent.get("max_price"),
+        attributes=intent.get("attribute_filters") or None,
+        deals_only=bool(intent.get("deals_only")),
         limit=20,
     )
 
@@ -87,7 +90,7 @@ def recommendation_agent_node(state: RetailGraphState) -> Dict[str, Any]:
     candidates = [entry.product for entry in ranked.ranked_products]
 
     update["product_candidates"] = candidates
-    update["tool_results"] = [
+    tool_results = [
         ToolCallTrace(
             tool_name="semantic_search_products",
             status="success",
@@ -100,7 +103,7 @@ def recommendation_agent_node(state: RetailGraphState) -> Dict[str, Any]:
             tool_name="rank_products", status="success", summary=f"ranked {len(candidates)} candidate(s)"
         ),
     ]
-    update["evidence"] = [
+    evidence = [
         EvidenceEntry(
             source="semantic_search_products",
             claim=f"{product.name} ({product.product_id}) is priced at ${product.price:.2f}",
@@ -108,6 +111,33 @@ def recommendation_agent_node(state: RetailGraphState) -> Dict[str, Any]:
         )
         for product in candidates
     ]
+    if intent.get("deals_only"):
+        for product in candidates:
+            promotions = get_promotions(product_id=product.product_id)
+            if promotions.error is not None:
+                continue
+            valid_promotions = [promotion for promotion in promotions.promotions if promotion.is_currently_valid]
+            for promotion in valid_promotions:
+                evidence.append(
+                    EvidenceEntry(
+                        source="get_promotions",
+                        claim=(
+                            f"{product.name} ({product.product_id}) has verified active promotion "
+                            f"{promotion.label} ({promotion.promotion_id})"
+                        ),
+                        data=promotion.model_dump(),
+                    )
+                )
+            tool_results.append(
+                ToolCallTrace(
+                    tool_name="get_promotions",
+                    status="success",
+                    summary=f"verified {len(valid_promotions)} active promotion(s) for {product.product_id}",
+                )
+            )
+
+    update["tool_results"] = tool_results
+    update["evidence"] = evidence
     return update
 
 

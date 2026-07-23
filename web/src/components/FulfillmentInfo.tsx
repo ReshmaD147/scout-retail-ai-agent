@@ -4,32 +4,15 @@ export interface FulfillmentInfoProps {
   options: FulfillmentOption[];
 }
 
-/**
- * Renders one product's verified fulfillment options, clearly
- * distinguishing where each one comes from - never blurring a
- * selected-store result together with a nearby-store or substitute
- * one (CLAUDE.md's Inventory Agent responsibilities; Step 14's "do
- * not present store-network inventory as warehouse inventory").
- *
- * Only real `FulfillmentOption` fields are ever shown (`channel`,
- * `store_name`/`store_id`, `sellable_quantity`, `distance_miles`,
- * `substitute_for`). A pickup estimate, a configured delivery window,
- * and a restock date are all things Scout's MCP tools *can* compute
- * (scout/mcp/inventory_tools.py, Step 7) but the current workflow
- * Step 16.5 now attaches a configured delivery window when the
- * store-network delivery path is used. It is shown explicitly as a
- * prototype estimate, never as a carrier-confirmed arrival date.
- */
 export function FulfillmentInfo({ options }: FulfillmentInfoProps): JSX.Element {
-  if (options.length === 0) {
-    return <p className="fulfillment-info__unavailable">Pickup time unavailable</p>;
-  }
+  if (options.length === 0) return <p className="fulfillment-info__unavailable">Pickup time unavailable</p>;
 
   return (
     <ul className="fulfillment-info">
       {options.map((option, index) => (
-        <li key={`${option.channel}-${option.store_id ?? "unknown"}-${index}`} className="fulfillment-info__item">
-          {describeOption(option)}
+        <li key={`${option.channel}-${option.store_id ?? "unknown"}-${index}`} className={`fulfillment-info__item${option.sellable_quantity > 0 ? " fulfillment-info__item--available" : " fulfillment-info__item--unavailable"}`}>
+          <span className="fulfillment-info__dot" aria-hidden="true" />
+          <span>{describeOption(option)}</span>
         </li>
       ))}
     </ul>

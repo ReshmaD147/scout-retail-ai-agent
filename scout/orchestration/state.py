@@ -281,6 +281,14 @@ class RetailGraphState(BaseModel):
     existing, already-tested understand_request_node extraction
     handles it without any agent-layer changes. This field itself is
     kept only for traceability/logging, not read by any node."""
+    requested_filters: Optional[Dict[str, Any]] = None
+    """Validated customer filters copied from ChatRequest.
+
+    This is trusted API input, not arbitrary graph control data.  The
+    understand-request node merges only the documented category,
+    product-type, price, attribute, stock, and fulfillment fields into
+    `intent`; specialist agents never read raw HTTP payloads.
+    """
 
     # -- Interpretation and planning ------------------------------------
     intent: Optional[Dict[str, Any]] = None
@@ -329,7 +337,7 @@ class RetailGraphState(BaseModel):
     Left as dicts for now - Phase 10 will settle on a single typed
     shape once the multi-agent workflow using it is actually built."""
     order_context: Optional[Dict[str, Any]] = None
-    """Reserved for the Order Agent (Phase 15, not yet built)."""
+    """Verified read-only order status payload produced by the Step 17 Order Agent."""
     policy_results: List[Dict[str, Any]] = Field(default_factory=list)
     """Reserved for the Support Agent (Phase 16, not yet built)."""
 

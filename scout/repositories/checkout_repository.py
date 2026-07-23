@@ -110,6 +110,8 @@ class CheckoutCommitPlan:
     shipping_total: float
     total: float
     currency: str
+    estimated_ready_at: Optional[str]
+    estimated_delivery_at: Optional[str]
     items: List[OrderItemWrite]
     reservations: List[ReservationWrite]
 
@@ -311,6 +313,22 @@ class CheckoutRepository:
                         plan.shipping_total,
                         plan.total,
                         plan.currency,
+                        now,
+                    ),
+                )
+
+                connection.execute(
+                    """
+                    INSERT INTO order_fulfillments (
+                        order_id, fulfillment_status, carrier_name, tracking_number,
+                        tracking_url, estimated_ready_at, estimated_delivery_at,
+                        shipped_at, delivered_at, picked_up_at, updated_at
+                    ) VALUES (?, 'processing', NULL, NULL, NULL, ?, ?, NULL, NULL, NULL, ?)
+                    """,
+                    (
+                        plan.order_id,
+                        plan.estimated_ready_at,
+                        plan.estimated_delivery_at,
                         now,
                     ),
                 )

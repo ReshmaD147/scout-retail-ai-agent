@@ -22,11 +22,59 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from scout.mcp.schemas import ExternalOfferSummary, ProductSummary
+from scout.services.order_service import OrderStatusView
 
 _MAX_MESSAGE_LENGTH = 2000
 """A reasonable ceiling for one chat message - generous for a real
 customer request, small enough to keep the graph's own inputs (and any
 future LLM prompt built from them) bounded rather than unbounded."""
+
+
+class RecommendationFilters(BaseModel):
+    """Customer-controlled recommendation filters supported end to end.
+
+    These are hard constraints, not ranking hints.  React sends them to
+    `/chat` or `/chat/stream`; `understand_request_node` merges them into
+    the structured intent; the deterministic search/inventory services
+    enforce them.  No internal graph field is exposed through this
+    model.
+
+    `attributes` uses canonical ``key:value`` tokens returned by
+    ``GET /catalog/filter-options``.  Keeping the token machine-readable
+    prevents the frontend from inventing product attributes or relying
+    on fuzzy display-label matching.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_price: Optional[float] = Field(default=None, ge=0)
+    category: Optional[str] = None
+    product_type: Optional[str] = None
+    attributes: List[str] = Field(default_factory=list, max_length=12)
+    in_stock_only: bool = True
+    fulfillment: Optional[Literal["pickup", "delivery"]] = None
+
+    @field_validator("category", "product_type")
+    @classmethod
+    def _optional_filter_text_must_not_be_blank(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("must not be whitespace-only")
+        return stripped
+
+    @field_validator("attributes")
+    @classmethod
+    def _attribute_tokens_must_be_nonblank(cls, values: List[str]) -> List[str]:
+        cleaned: List[str] = []
+        for value in values:
+            stripped = value.strip()
+            if not stripped:
+                raise ValueError("attribute filters must not be blank")
+            if stripped not in cleaned:
+                cleaned.append(stripped)
+        return cleaned
 
 
 class ChatRequest(BaseModel):
@@ -50,6 +98,10 @@ class ChatRequest(BaseModel):
     user_id: Optional[str] = Field(default=None, description="The authenticated customer, if known.")
     store_id: Optional[str] = Field(default=None, description="A store the customer already has in mind.")
     location: Optional[str] = Field(default=None, description="A free-text location hint (e.g. a city).")
+    filters: Optional[RecommendationFilters] = Field(
+        default=None,
+        description="Optional deterministic product and fulfillment filters.",
+    )
 
     @field_validator("session_id", "message")
     @classmethod
@@ -114,6 +166,19 @@ class FulfillmentOption(BaseModel):
     delivery_max_days: Optional[int] = None
 
 
+class RequestedLocation(BaseModel):
+    """A customer-safe map point resolved from the request.
+
+    Today Scout resolves a city/store phrase to one of its real store
+    records.  The frontend uses this only to place the requested-area
+    marker; it is not claimed to be the customer's precise GPS position.
+    """
+
+    label: str
+    latitude: float
+    longitude: float
+
+
 class ChatResponse(BaseModel):
     """The only shape POST /chat ever returns for a request that was
     itself valid (HTTP 200 in every case below - see
@@ -131,8 +196,11 @@ class ChatResponse(BaseModel):
     happen once workflow_status is terminal/paused)."""
     products: List[ProductSummary] = Field(default_factory=list)
     fulfillment_options: List[FulfillmentOption] = Field(default_factory=list)
+    requested_location: Optional[RequestedLocation] = None
     external_offers: List[ExternalOfferSummary] = Field(default_factory=list)
     """Mock merchant alternatives returned only when no internal option is fulfillable."""
+    order: Optional[OrderStatusView] = None
+    """Verified read-only order status returned by the Step 17 Order Agent."""
     activity_events: List[str] = Field(default_factory=list)
     """A fixed vocabulary of customer-safe phrases describing what
     Scout did (e.g. "Searching the product catalog") - never a tool's

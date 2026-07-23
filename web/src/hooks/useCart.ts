@@ -28,6 +28,7 @@ export interface UseCartResult {
   isLoading: boolean;
   errorMessage: string | null;
   stores: StoreSummary[];
+  storesErrorMessage: string | null;
   addItem: (productId: string, quantity?: number) => Promise<void>;
   updateQuantity: (cartItemId: string, quantity: number) => Promise<void>;
   removeItem: (cartItemId: string) => Promise<void>;
@@ -36,6 +37,7 @@ export interface UseCartResult {
   chooseDelivery: () => Promise<void>;
   dismissError: () => void;
   refresh: () => Promise<void>;
+  refreshStores: () => Promise<void>;
 }
 
 /**
@@ -49,6 +51,7 @@ export function useCart(sessionId: string): UseCartResult {
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [stores, setStores] = useState<StoreSummary[]>([]);
+  const [storesErrorMessage, setStoresErrorMessage] = useState<string | null>(null);
 
   const runMutation = useCallback(
     async (mutation: () => Promise<CartView>) => {
@@ -93,22 +96,19 @@ export function useCart(sessionId: string): UseCartResult {
     };
   }, [sessionId]);
 
-  useEffect(() => {
-    let cancelled = false;
-    listStores()
-      .then((result) => {
-        if (!cancelled) {
-          setStores(result);
-        }
-      })
-      .catch(() => {
-        // The pickup-store selector simply stays empty - a store list
-        // failure must never block the rest of the cart from working.
-      });
-    return () => {
-      cancelled = true;
-    };
+  const refreshStores = useCallback(async () => {
+    setStoresErrorMessage(null);
+    try {
+      setStores(await listStores());
+    } catch {
+      setStores([]);
+      setStoresErrorMessage("Scout could not load pickup locations. Check that the Step 17 backend is running, then try again.");
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshStores();
+  }, [refreshStores]);
 
   const refresh = useCallback(async () => {
     if (!sessionId) return;
@@ -161,6 +161,7 @@ export function useCart(sessionId: string): UseCartResult {
     isLoading,
     errorMessage,
     stores,
+    storesErrorMessage,
     addItem,
     updateQuantity,
     removeItem,
@@ -169,5 +170,6 @@ export function useCart(sessionId: string): UseCartResult {
     chooseDelivery,
     dismissError,
     refresh,
+    refreshStores,
   };
 }

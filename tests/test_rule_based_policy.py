@@ -75,3 +75,10 @@ def test_treats_missing_intent_as_completely_vague():
     decision = policy.decide(state)
 
     assert decision.decision == "clarification"
+
+
+def test_routes_order_intent_to_order_agent():
+    state = _state(intent={"request_type": "order", "order_id": None, "order_action": "status"})
+    decision = RuleBasedSupervisorPolicy().decide(state)
+    assert decision.decision == "order"
+    assert decision.plan[0].agent == "order"

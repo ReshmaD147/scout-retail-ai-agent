@@ -45,6 +45,7 @@ instructions warn against.
 """
 
 import re
+from datetime import date
 from typing import Dict, List, Literal, Optional, Tuple
 
 from pydantic import BaseModel
@@ -53,7 +54,8 @@ from scout.config import get_settings
 from scout.repositories.embedding_repository import EmbeddingRepository
 from scout.repositories.models import Product
 from scout.repositories.product_repository import ProductRepository
-from scout.services import budget_service, product_filter_service, ranking_service
+from scout.repositories.promotion_repository import PromotionRepository
+from scout.services import budget_service, product_filter_service, promotion_service, ranking_service
 from scout.services.embedding_service import EmbeddingProvider, cosine_similarity, get_embedding_provider
 from scout.services.product_search_text_service import build_search_text, hash_search_text
 
@@ -82,14 +84,37 @@ class ProductSearchOutcome(BaseModel):
     methods, the size of the matched row set before ranking."""
 
 
+def _current_deal_product_ids() -> set[str]:
+    today = date.today()
+    return {
+        promotion.product_id
+        for promotion in PromotionRepository().list_active()
+        if promotion_service.is_promotion_valid(promotion, today)
+    }
+
+
 def _finalize(
-    candidates: List[Product], category: Optional[str], max_price: Optional[float]
+    candidates: List[Product],
+    category: Optional[str],
+    subcategory: Optional[str],
+    max_price: Optional[float],
+    attributes: Optional[List[str]],
+    deals_only: bool,
 ) -> List[Product]:
     """Apply the same deterministic filters and ranking every retrieval
     strategy must go through, regardless of how candidates were found."""
-    filtered = product_filter_service.filter_products(candidates, category=category, active_only=True)
+    filtered = product_filter_service.filter_products(
+        candidates,
+        category=category,
+        subcategory=subcategory,
+        attributes=attributes,
+        active_only=True,
+    )
     if max_price is not None:
         filtered = budget_service.filter_within_budget(filtered, max_budget=max_price)
+    if deals_only:
+        eligible_ids = _current_deal_product_ids()
+        filtered = [product for product in filtered if product.product_id in eligible_ids]
     return [entry.product for entry in ranking_service.rank_products(filtered)]
 
 
@@ -211,7 +236,10 @@ def search_products_by_meaning(
     query_text: str,
     keyword: Optional[str] = None,
     category: Optional[str] = None,
+    subcategory: Optional[str] = None,
     max_price: Optional[float] = None,
+    attributes: Optional[List[str]] = None,
+    deals_only: bool = False,
     provider: Optional[EmbeddingProvider] = None,
 ) -> ProductSearchOutcome:
     """Search the catalog for candidates matching `query_text`.
@@ -238,11 +266,21 @@ def search_products_by_meaning(
     active_provider = provider or get_embedding_provider()
 
     pool = ProductRepository().list_active(category=category, limit=_LARGE_CATALOG_LIMIT)
+    if deals_only:
+        deal_ids = _current_deal_product_ids()
+        pool = [product for product in pool if product.product_id in deal_ids]
 
     exact = _exact_match(query_text, pool)
     if exact is not None:
         matches, method = exact
-        finalized = _finalize(matches, category=category, max_price=max_price)
+        finalized = _finalize(
+            matches,
+            category=category,
+            subcategory=subcategory,
+            max_price=max_price,
+            attributes=attributes,
+            deals_only=deals_only,
+        )
         return ProductSearchOutcome(
             products=finalized, retrieval_method=method, candidates_considered=len(matches)
         )
@@ -251,7 +289,14 @@ def search_products_by_meaning(
         literal_matches = ProductRepository().search(
             keyword=keyword, category=category, max_price=max_price, limit=_LARGE_CATALOG_LIMIT
         )
-        finalized = _finalize(literal_matches, category=category, max_price=max_price)
+        finalized = _finalize(
+            literal_matches,
+            category=category,
+            subcategory=subcategory,
+            max_price=max_price,
+            attributes=attributes,
+            deals_only=deals_only,
+        )
         return ProductSearchOutcome(
             products=finalized,
             retrieval_method="literal_keyword",
@@ -266,7 +311,14 @@ def search_products_by_meaning(
         candidate_limit=settings.semantic_search_candidate_limit,
         min_similarity=settings.semantic_search_min_similarity,
     )
-    finalized = _finalize(semantic_matches, category=category, max_price=max_price)
+    finalized = _finalize(
+        semantic_matches,
+        category=category,
+        subcategory=subcategory,
+        max_price=max_price,
+        attributes=attributes,
+        deals_only=deals_only,
+    )
     return ProductSearchOutcome(
         products=finalized, retrieval_method="semantic", candidates_considered=len(pool)
     )

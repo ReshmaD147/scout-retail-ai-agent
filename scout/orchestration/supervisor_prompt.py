@@ -102,6 +102,14 @@ def format_state_summary(state: RetailGraphState) -> str:
         lines.append("Errors encountered so far: (none)")
 
     lines.append(f"Product candidates so far: {len(state.product_candidates)}")
+    if state.order_context:
+        lines.append(
+            "Order context: "
+            f"{state.order_context.get('order_id', '(unknown id)')} / "
+            f"{state.order_context.get('order_status', '(unknown status)')}"
+        )
+    else:
+        lines.append("Order context: (none)")
     lines.append(f"Pending confirmation: {'yes' if state.pending_confirmation else 'no'}")
 
     return "\n".join(lines)

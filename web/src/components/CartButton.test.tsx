@@ -5,9 +5,10 @@ import { CartButton } from "./CartButton";
 
 describe("CartButton", () => {
   it("displays the current item count (scenario 21)", () => {
-    render(<CartButton itemCount={3} onClick={() => {}} />);
+    render(<CartButton itemCount={3} subtotal={239.97} onClick={() => {}} />);
     expect(screen.getByText("3")).toBeInTheDocument();
     expect(screen.getByLabelText("3 items in cart")).toBeInTheDocument();
+    expect(screen.getByText("$239.97")).toBeInTheDocument();
   });
 
   it("uses singular wording for exactly one item", () => {
