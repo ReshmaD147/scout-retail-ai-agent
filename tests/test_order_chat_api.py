@@ -52,6 +52,27 @@ def test_chat_can_lookup_an_explicit_order_id(client, _use_seeded_database):
     assert response.json()["order"]["order_id"] == created.order_id
 
 
+def test_order_specific_damaged_return_request_does_not_render_product_no_results(client):
+    response = client.post(
+        "/chat",
+        json={
+            "session_id": "chat-damaged-return",
+            "message": "Can I return the coffee maker from order ORD-1005? It arrived damaged.",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "completed"
+    assert body["message_type"] == "order_status"
+    assert body["products"] == []
+    assert body["product_groups"] == []
+    assert body["order"] is None
+    assert "No order was found" in body["answer"]
+    assert "No matching products found" not in body["answer"]
+    assert "Recommendation Agent searching products" not in body["activity_events"]
+
+
 def test_stream_final_response_contains_order_status(client, _use_seeded_database):
     created = create_pickup_order(_use_seeded_database, "stream-order")
     with client.stream(

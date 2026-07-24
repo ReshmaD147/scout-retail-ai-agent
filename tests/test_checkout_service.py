@@ -1,6 +1,7 @@
 """Step 16 deterministic checkout service tests."""
 
 import sqlite3
+from datetime import date, timedelta
 
 import pytest
 
@@ -11,6 +12,21 @@ from scout.services.payment_service import PaymentIntentResult, WebhookEvent
 
 PRODUCT = "FTW-004"
 PICKUP_STORE = "STR-002"
+
+
+def _insert_current_promotion(db_path: str, product_id: str, promotion_id: str, discount_percent: float) -> None:
+    today = date.today()
+    start_date = (today - timedelta(days=1)).isoformat()
+    end_date = (today + timedelta(days=7)).isoformat()
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO promotions (promotion_id, product_id, label, discount_percent, discount_amount,
+                                     start_date, end_date, active)
+            VALUES (?, ?, 'Checkout Test Promo', ?, NULL, ?, ?, 1)
+            """,
+            (promotion_id, product_id, discount_percent, start_date, end_date),
+        )
 
 
 def _pickup_cart(db_path: str, session_id: str = "checkout-session"):
@@ -59,6 +75,18 @@ def test_review_calculates_discount_tax_shipping_and_total_server_side(seeded_db
     assert review.shipping_total == 0.0  # pickup
     assert review.total == round(review.merchandise_total + review.tax_total, 2)
     assert review.payment_provider == "mock"
+
+
+def test_checkout_review_recalculates_active_promotion_from_backend(seeded_db_path):
+    _insert_current_promotion(seeded_db_path, PRODUCT, "PRM-CHECKOUT-CURRENT", 50.0)
+    _pickup_cart(seeded_db_path, session_id="checkout-promo-session")
+
+    review = checkout_service.create_checkout_review("checkout-promo-session", db_path=seeded_db_path)
+
+    assert review.items[0].promotion_id == "PRM-CHECKOUT-CURRENT"
+    assert review.items[0].promotion_label == "Checkout Test Promo"
+    assert review.items[0].charged_unit_price == round(89.99 * 0.5, 2)
+    assert review.discount_total == round(review.subtotal - review.merchandise_total, 2)
 
 
 def test_delivery_review_persists_the_address(seeded_db_path):

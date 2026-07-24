@@ -36,7 +36,8 @@ _DECISION_TO_NODE = {
     "inventory_agent": "inventory_agent",
     "order": "order_agent",
     "order_agent": "order_agent",
-    "support": "external_offer_agent",
+    "support": "support",
+    "policy_agent": "policy_agent",
     "external_offer_agent": "external_offer_agent",
     "verification": "verification_agent",
     "verification_agent": "verification_agent",
@@ -60,4 +61,8 @@ def route_from_supervisor(state: RetailGraphState) -> str:
     if state.workflow_status in _PAUSED_OR_TERMINAL_STATUSES:
         return END
 
-    return _DECISION_TO_NODE.get(state.next_agent, END)
+    destination = _DECISION_TO_NODE.get(state.next_agent, END)
+    if destination == "support":
+        intent = state.intent or {}
+        return "policy_agent" if intent.get("request_type") == "policy" or intent.get("needs_policy") else "external_offer_agent"
+    return destination

@@ -55,7 +55,6 @@ def test_agent_registries_include_only_expected_read_only_tool_names():
     assert {
         "search_external_offers",
         "get_external_offer_details",
-        "track_affiliate_click",
     } == EXTERNAL_OFFER_TOOL_NAMES
     assert {
         "lookup_order",
@@ -81,6 +80,13 @@ def test_no_autonomous_registry_contains_checkout_or_payment_mutations():
     }
     for registry in (RECOMMENDATION_TOOL_NAMES, INVENTORY_TOOL_NAMES, EXTERNAL_OFFER_TOOL_NAMES, ORDER_READ_ONLY_TOOL_NAMES):
         assert registry.isdisjoint(forbidden)
+
+
+def test_affiliate_tracking_is_not_autonomous():
+    assert "track_affiliate_click" in registered_mcp_tool_names()
+    assert "track_affiliate_click" not in AUTONOMOUS_TOOL_NAMES
+    for registry in (RECOMMENDATION_TOOL_NAMES, INVENTORY_TOOL_NAMES, EXTERNAL_OFFER_TOOL_NAMES, ORDER_READ_ONLY_TOOL_NAMES):
+        assert "track_affiliate_click" not in registry
 
 
 def test_no_autonomous_registry_contains_order_mutations():
@@ -239,10 +245,40 @@ def test_external_search_requires_insufficient_internal_options():
     assert result.rejection.reason == "External search requires evidence that internal options are insufficient."
 
 
-def test_external_search_allowed_when_no_internal_candidate_survived():
-    result = validate_tool_call("external_offer", "search_external_offers", {"query_text": "shoes"}, _state())
+def test_external_search_allowed_for_explicit_external_request():
+    result = validate_tool_call(
+        "external_offer",
+        "search_external_offers",
+        {"query_text": "external shoes"},
+        _state(customer_query="show external shoes from another retailer"),
+    )
 
     assert result.allowed is True
+
+
+def test_external_search_allowed_after_successful_internal_exhaustion():
+    state = _state(
+        product_candidates=[_product()],
+        inventory_results=[{"product_id": "FTW-004", "sellable_quantity": 0}],
+        tool_results=[{"tool_name": "check_network_inventory", "status": "success", "summary": "none available"}],
+    )
+
+    result = validate_tool_call("external_offer", "search_external_offers", {"query_text": "shoes"}, state)
+
+    assert result.allowed is True
+
+
+def test_failed_inventory_check_does_not_prove_external_fallback_allowed():
+    state = _state(
+        product_candidates=[_product()],
+        tool_results=[
+            {"tool_name": "check_network_inventory", "status": "error", "summary": "timeout"},
+        ],
+    )
+
+    result = validate_tool_call("external_offer", "search_external_offers", {"query_text": "shoes"}, state)
+
+    assert result.allowed is False
 
 
 def test_order_lookup_requires_session_and_order_identifier():
@@ -295,3 +331,8 @@ def test_comparison_allows_two_product_ids():
     )
 
     assert result.allowed is True
+
+
+def test_autonomous_agents_still_do_not_have_support_mutation_tools():
+    forbidden = {"issue_refund", "cancel_order", "process_return", "create_payment_intent", "confirm_payment"}
+    assert AUTONOMOUS_TOOL_NAMES.isdisjoint(forbidden)

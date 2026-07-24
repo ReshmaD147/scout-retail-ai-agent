@@ -33,6 +33,20 @@ describe("FulfillmentSummary", () => {
 
   it("shows a grounded empty state before a search", () => {
     render(<FulfillmentSummary options={[]} stores={stores} requestedLocation={null} />);
-    expect(screen.getByText(/search for a product to see verified store and delivery options/i)).toBeInTheDocument();
+    expect(screen.getByText(/search for a product to view verified pickup and delivery options/i)).toBeInTheDocument();
+  });
+
+  it("hides the empty fulfillment placeholder when delivery evidence exists", () => {
+    render(
+      <FulfillmentSummary
+        options={[
+          { product_id: "FTW-004", channel: "delivery", store_id: null, store_name: null, sellable_quantity: 7, distance_miles: null, substitute_for: null, delivery_min_days: 3, delivery_max_days: 5 },
+        ]}
+        stores={stores}
+        requestedLocation={null}
+      />
+    );
+    expect(screen.queryByText(/search for a product to view verified pickup and delivery options/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/7 available across the Scout store network/i)).toBeInTheDocument();
   });
 });

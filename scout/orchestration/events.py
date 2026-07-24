@@ -37,6 +37,7 @@ TOOL_LABELS: Dict[str, str] = {
     "find_available_substitutes": "Finding available substitutes",
     "search_external_offers": "External Offer Agent searching alternatives",
     "lookup_order": "Order Agent retrieving order evidence",
+    "retrieve_policy_sections": "Policy Agent retrieving policy evidence",
     "lookup_latest_order": "Order Agent retrieving order evidence",
     "get_order_status": "Order Agent retrieving order evidence",
     "get_payment_status": "Order Agent retrieving order evidence",
@@ -66,7 +67,7 @@ NEXT_AGENT_LABELS: Dict[str, str] = {
     "recommendation": "Recommendation Agent searching products",
     "inventory": "Inventory Agent checking selected store",
     "order": "Order Agent retrieving order evidence",
-    "support": "External Offer Agent searching alternatives",
+    "support": "Policy Agent retrieving policy evidence",
     "external_offer_agent": "External Offer Agent searching alternatives",
     "verification": "Verifying claims",
 }

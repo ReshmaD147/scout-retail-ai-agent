@@ -6,12 +6,13 @@ import type { RecommendationFilters } from "../types/chat";
 export interface ProductFiltersProps {
   value: RecommendationFilters;
   disabled?: boolean;
+  canApply?: boolean;
   onApply: (filters: RecommendationFilters) => void;
 }
 
 const EMPTY_FILTERS: RecommendationFilters = { in_stock_only: true };
 
-export function ProductFilters({ value, disabled = false, onApply }: ProductFiltersProps): JSX.Element {
+export function ProductFilters({ value, disabled = false, canApply = true, onApply }: ProductFiltersProps): JSX.Element {
   const { options, isLoading, errorMessage, retry } = useCatalogFilters();
   const [draft, setDraft] = useState<RecommendationFilters>({ ...EMPTY_FILTERS, ...value });
 
@@ -21,7 +22,7 @@ export function ProductFilters({ value, disabled = false, onApply }: ProductFilt
 
   const productTypes = draft.category && options ? options.product_types[draft.category] ?? [] : [];
   const attributeOptions = useMemo(() => {
-    if (!options) return [];
+    if (!options || (!draft.category && !draft.product_type)) return [];
     return options.attributes
       .filter((option) => !draft.category || option.categories.includes(draft.category))
       .filter((option) => !draft.product_type || option.product_types.includes(draft.product_type))
@@ -31,7 +32,9 @@ export function ProductFilters({ value, disabled = false, onApply }: ProductFilt
   const resolvedMax = options?.max_price ?? 500;
   const selectedMax = Math.min(draft.max_price ?? resolvedMax, resolvedMax);
   const selectedAttributes = new Set(draft.attributes ?? []);
-  const hasChanges = JSON.stringify({ ...EMPTY_FILTERS, ...value }) !== JSON.stringify(draft);
+  const appliedFilters = { ...EMPTY_FILTERS, ...value };
+  const hasChanges = JSON.stringify(appliedFilters) !== JSON.stringify(draft);
+  const hasActiveFilters = JSON.stringify(appliedFilters) !== JSON.stringify(EMPTY_FILTERS);
 
   const updateCategory = (category: string): void => {
     setDraft((current) => ({
@@ -53,17 +56,20 @@ export function ProductFilters({ value, disabled = false, onApply }: ProductFilt
   };
 
   const clear = (): void => {
-    setDraft(EMPTY_FILTERS);
-    onApply(EMPTY_FILTERS);
+    const resetFilters = { ...EMPTY_FILTERS };
+    setDraft(resetFilters);
+    if (canApply && !disabled) {
+      onApply(resetFilters);
+    }
   };
 
   return (
     <section className="filters-card" aria-labelledby="filters-title">
       <div className="filters-card__header">
         <h2 id="filters-title">Filters</h2>
-        <button type="button" onClick={clear} disabled={disabled}>Clear all</button>
+        <button type="button" onClick={clear} disabled={disabled || (!hasChanges && !hasActiveFilters)}>Clear all</button>
       </div>
-      <p className="filters-card__note">Filters re-run Scout&apos;s verified backend search; they do not hide cards only in the browser.</p>
+      <p className="filters-card__note">Filters update your verified Scout results.</p>
 
       {isLoading && <p className="filters-card__status">Loading catalog filters…</p>}
       {errorMessage && (
@@ -153,10 +159,10 @@ export function ProductFilters({ value, disabled = false, onApply }: ProductFilt
       <button
         type="button"
         className="filters-card__apply"
-        disabled={disabled || !options || !hasChanges}
+        disabled={disabled || !canApply || !options || !hasChanges}
         onClick={() => onApply({ ...draft, in_stock_only: true })}
       >
-        Apply filters
+        {canApply ? "Apply filters" : "Search first to apply filters"}
       </button>
     </section>
   );

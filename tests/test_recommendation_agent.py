@@ -28,26 +28,25 @@ def _state(**overrides):
 # ---------------------------------------------------------------------------
 
 
-def test_finds_the_single_matching_candidate_within_budget():
+def test_finds_matching_candidates_within_budget():
     state = _state(intent={"category": "Footwear", "keyword": "work", "max_price": 100.0})
 
     update = recommendation_agent_node(state)
 
     candidates = update["product_candidates"]
-    assert [c.product_id for c in candidates] == ["FTW-004"]
+    assert [c.product_id for c in candidates] == ["FTW-004", "FTW-008"]
     assert all(c.price <= 100.0 for c in candidates)
     assert update["evidence"][0].claim.startswith("ComfortPro Shift Support")
 
 
 def test_excludes_a_candidate_above_budget():
-    # FTW-004 ($89.99) is the only Footwear product whose description
-    # contains "work" - lowering the budget below it must exclude it,
-    # not silently substitute something else.
+    # FTW-004 ($89.99) is excluded, while FTW-008 ($49.99) remains a
+    # verified work-footwear match through subcategory/attributes.
     state = _state(intent={"category": "Footwear", "keyword": "work", "max_price": 50.0})
 
     update = recommendation_agent_node(state)
 
-    assert update["product_candidates"] == []
+    assert [product.product_id for product in update["product_candidates"]] == ["FTW-008"]
 
 
 def test_records_a_workflow_error_when_search_products_fails(monkeypatch):

@@ -131,9 +131,11 @@ class ProductRepository:
         if active_only:
             conditions.append("active = 1")
         if keyword is not None:
-            conditions.append("(name LIKE ? OR description LIKE ?)")
+            conditions.append(
+                "(name LIKE ? OR description LIKE ? OR subcategory LIKE ? OR attributes_json LIKE ?)"
+            )
             like_value = f"%{keyword}%"
-            params.extend([like_value, like_value])
+            params.extend([like_value, like_value, like_value, like_value])
         if category is not None:
             conditions.append("category = ?")
             params.append(category)

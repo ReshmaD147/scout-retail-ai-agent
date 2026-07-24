@@ -221,6 +221,26 @@ class CartItem(BaseModel):
         )
 
 
+class SavedProduct(BaseModel):
+    """One saved_products row owned by either a guest session or customer."""
+
+    saved_id: str
+    session_id: Optional[str]
+    customer_id: Optional[str]
+    product_id: str
+    created_at: str
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "SavedProduct":
+        return cls(
+            saved_id=row["saved_id"],
+            session_id=row["session_id"],
+            customer_id=row["customer_id"],
+            product_id=row["product_id"],
+            created_at=row["created_at"],
+        )
+
+
 class SessionRecommendationSnapshot(BaseModel):
     """One row from session_recommendation_snapshots (Step 15).
 
@@ -483,4 +503,141 @@ class AffiliateClickRecord(BaseModel):
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> "AffiliateClickRecord":
+        return cls(**dict(row))
+
+
+class ProtectedActionConfirmationRecord(BaseModel):
+    confirmation_id: str
+    workflow_id: str
+    request_id: str
+    session_id: str
+    customer_id: str
+    action_type: str
+    resource_type: str
+    resource_id: str
+    proposal_summary: str
+    customer_effects: List[str]
+    financial_effects: List[str]
+    eligibility_status: str
+    eligibility_reason_code: str
+    policy_ids: List[str]
+    evidence_ids: List[str]
+    payload_hash: str
+    idempotency_key: str
+    status: str
+    result: Optional[Dict[str, Any]]
+    created_at: str
+    expires_at: str
+    consumed_at: Optional[str]
+    updated_at: str
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "ProtectedActionConfirmationRecord":
+        values = dict(row)
+        values["customer_effects"] = json.loads(values.pop("customer_effects_json"))
+        values["financial_effects"] = json.loads(values.pop("financial_effects_json"))
+        values["policy_ids"] = json.loads(values.pop("policy_ids_json"))
+        values["evidence_ids"] = json.loads(values.pop("evidence_ids_json"))
+        result_json = values.pop("result_json")
+        values["result"] = json.loads(result_json) if result_json else None
+        return cls(**values)
+
+
+class ProtectedActionRequestRecord(BaseModel):
+    request_id: str
+    confirmation_id: str
+    action_type: str
+    order_id: str
+    order_item_id: Optional[str]
+    status: str
+    reason: Optional[str]
+    payload: Dict[str, Any]
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "ProtectedActionRequestRecord":
+        values = dict(row)
+        values["payload"] = json.loads(values.pop("payload_json"))
+        return cls(**values)
+
+
+class WorkflowMemoryRecord(BaseModel):
+    workflow_id: str
+    session_id: str
+    customer_id: Optional[str]
+    current_query: str
+    structured_intent: Optional[Dict[str, Any]]
+    current_plan: List[Dict[str, Any]]
+    completed_steps: List[str]
+    remaining_steps: List[str]
+    tool_result_refs: List[str]
+    evidence_ids: List[str]
+    selected_products: List[str]
+    errors: List[Dict[str, Any]]
+    retry_state: Dict[str, Any]
+    verification_status: Optional[str]
+    status: str
+    created_at: str
+    updated_at: str
+    expires_at: Optional[str]
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "WorkflowMemoryRecord":
+        values = dict(row)
+        values["structured_intent"] = json.loads(values.pop("structured_intent_json")) if values["structured_intent_json"] else None
+        values["current_plan"] = json.loads(values.pop("current_plan_json"))
+        values["completed_steps"] = json.loads(values.pop("completed_steps_json"))
+        values["remaining_steps"] = json.loads(values.pop("remaining_steps_json"))
+        values["tool_result_refs"] = json.loads(values.pop("tool_result_refs_json"))
+        values["evidence_ids"] = json.loads(values.pop("evidence_ids_json"))
+        values["selected_products"] = json.loads(values.pop("selected_products_json"))
+        values["errors"] = json.loads(values.pop("errors_json"))
+        values["retry_state"] = json.loads(values.pop("retry_state_json"))
+        return cls(**values)
+
+
+class SessionMemoryRecord(BaseModel):
+    session_id: str
+    customer_id: Optional[str]
+    viewed_products: List[str]
+    rejected_products: List[str]
+    recommended_products: List[str]
+    current_budget: Optional[float]
+    selected_store_id: Optional[str]
+    fulfillment_preference: Optional[str]
+    comparison_set: List[str]
+    current_policy_topic: Optional[str]
+    authorized_order_ref: Optional[str]
+    memory_disabled: bool
+    created_at: str
+    updated_at: str
+    expires_at: str
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "SessionMemoryRecord":
+        values = dict(row)
+        values["viewed_products"] = json.loads(values.pop("viewed_products_json"))
+        values["rejected_products"] = json.loads(values.pop("rejected_products_json"))
+        values["recommended_products"] = json.loads(values.pop("recommended_products_json"))
+        values["comparison_set"] = json.loads(values.pop("comparison_set_json"))
+        values["memory_disabled"] = bool(values["memory_disabled"])
+        return cls(**values)
+
+
+class DurablePreferenceRecord(BaseModel):
+    preference_id: str
+    customer_id: str
+    type: str
+    value: str
+    confidence: float
+    source: str
+    status: str
+    created_at: str
+    updated_at: str
+    last_confirmed_at: Optional[str]
+    expires_at: Optional[str]
+
+    @classmethod
+    def from_row(cls, row: sqlite3.Row) -> "DurablePreferenceRecord":
         return cls(**dict(row))

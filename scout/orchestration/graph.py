@@ -52,13 +52,13 @@ function safe: a policy cannot send this graph to a node that has not
 been implemented yet.
 """
 
-from email import policy
 from typing import Any, Dict, Optional
 
 from langgraph.graph import END, START, StateGraph
 
 from scout.agents.external_offer_agent import external_offer_fallback_node
 from scout.agents.order_agent import order_agent_node
+from scout.agents.policy_agent import policy_agent_node
 from scout.agents.inventory_agent import (
     availability_evaluation_node,
     inventory_agent_node,
@@ -82,6 +82,7 @@ _SUPERVISOR_ROUTES = {
     "inventory_agent": "inventory_agent",
     "order_agent": "order_agent",
     "external_offer_agent": "external_offer_agent",
+    "policy_agent": "policy_agent",
     "verification_agent": "verification_agent",
     END: "response_renderer",
 }
@@ -201,6 +202,7 @@ def build_retail_graph(policy: Optional[SupervisorPolicy] = None):
     graph.add_node("order_agent", _bounded_node(order_agent_node))
     graph.add_node("inventory_agent", _bounded_node(inventory_specialist_node))
     graph.add_node("external_offer_agent", _bounded_node(external_offer_fallback_node))
+    graph.add_node("policy_agent", _bounded_node(policy_agent_node))
     graph.add_node(
         "verification_agent",
         _bounded_node(
@@ -227,6 +229,7 @@ def build_retail_graph(policy: Optional[SupervisorPolicy] = None):
     graph.add_edge("recommendation_agent", "supervisor")
     graph.add_edge("inventory_agent", "supervisor")
     graph.add_edge("external_offer_agent", "supervisor")
+    graph.add_edge("policy_agent", "supervisor")
     graph.add_conditional_edges(
         "verification_agent",
         route_after_verification,

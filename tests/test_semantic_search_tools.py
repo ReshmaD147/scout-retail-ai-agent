@@ -52,7 +52,7 @@ def test_literal_keyword_path_is_unchanged():
 
     assert result.error is None
     assert result.retrieval_method == "literal_keyword"
-    assert [p.product_id for p in result.products] == ["FTW-004"]
+    assert [p.product_id for p in result.products] == ["FTW-004", "FTW-008"]
 
 
 def test_limit_truncates_the_returned_products():

@@ -212,7 +212,7 @@ def test_final_response_event_contains_verified_output(client):
     assert final_event is not None
     payload = final_event["data"]["data"]
     assert payload["status"] == "completed"
-    assert [p["product_id"] for p in payload["products"]] == ["FTW-004"]
+    assert [p["product_id"] for p in payload["products"]] == ["FTW-004", "FTW-008"]
     assert final_event["data"]["label"] == "Completed"
 
 

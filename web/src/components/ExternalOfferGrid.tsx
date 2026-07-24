@@ -16,12 +16,14 @@ export function ExternalOfferGrid({ offers, sessionId, workflowId }: ExternalOff
     <section className="external-offers" aria-labelledby="external-offers-title">
       <div className="external-offers__heading">
         <div>
-          <p className="external-offers__eyebrow">External merchant fallback</p>
-          <h2 id="external-offers-title">Similar options from demo retailers</h2>
+          <p className="external-offers__eyebrow">Other retailers</p>
+          <h2 id="external-offers-title">External alternatives</h2>
         </div>
         <span className="external-offers__badge">Not sold by Scout</span>
       </div>
-      <p className="external-offers__disclosure">{offers[0].disclosure}</p>
+      <p className="external-offers__disclosure">
+        These products are sold by other retailers. Price and availability may change. Scout may earn a referral commission if you purchase through an eligible link.
+      </p>
       <div className="external-offers__grid" role="list" aria-label="External retailer alternatives">
         {offers.map((offer) => (
           <div role="listitem" key={offer.offer_id}>

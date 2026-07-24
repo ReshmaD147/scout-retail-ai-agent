@@ -235,23 +235,31 @@ class WorkflowError(BaseModel):
 
 
 class PendingConfirmation(BaseModel):
-    """A protected action awaiting the customer's explicit confirmation.
+    """A protected action awaiting explicit customer confirmation."""
 
-    Populated only for the sensitive actions CLAUDE.md section 3 lists
-    (cancel, return/exchange, refund, charge) - Scout must never
-    execute one of these without this being confirmed first (Step 17
-    builds the actual confirm/resume flow; this field only describes
-    what is waiting).
-    """
-
-    action_type: Literal["cancel_order", "return_or_exchange", "refund", "charge_payment"]
+    confirmation_id: Optional[str] = None
+    workflow_id: Optional[str] = None
+    request_id: Optional[str] = None
+    action_type: Literal[
+        "cancel_order",
+        "create_return_request",
+        "create_exchange_request",
+        "change_order_address",
+        "create_refund_request",
+        "start_protected_payment_handoff",
+        "return_or_exchange",
+        "refund",
+        "charge_payment",
+    ]
     description: str = Field(min_length=1)
-    """A clear, customer-facing explanation of the proposed action
-    (CLAUDE.md section 3, requirement 4)."""
     target_id: Optional[str] = None
-    """The order, return, or payment record this action applies to."""
+    resource_type: Optional[str] = None
+    customer_effects: List[str] = Field(default_factory=list)
+    financial_effects: List[str] = Field(default_factory=list)
+    eligibility_status: Optional[str] = None
+    eligibility_reason_code: Optional[str] = None
+    expires_at: Optional[str] = None
     requested_at: Optional[str] = None
-    """ISO timestamp of when confirmation was requested."""
 
 
 # ---------------------------------------------------------------------------
@@ -376,6 +384,8 @@ class RetailGraphState(BaseModel):
     candidate_products: List[ProductSummary] = Field(default_factory=list)
     """New name for product_candidates."""
     selected_products: List[ProductSummary] = Field(default_factory=list)
+    product_groups: List[Dict[str, Any]] = Field(default_factory=list)
+    missing_product_targets: List[Dict[str, Any]] = Field(default_factory=list)
     external_offers: List[ExternalOfferSummary] = Field(default_factory=list)
     """Verified mock merchant offers returned only when every internal
     fulfillment channel has been exhausted. Replaced wholesale on each

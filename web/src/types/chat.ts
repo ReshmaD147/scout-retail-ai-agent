@@ -22,6 +22,23 @@ export interface ProductSummary {
   review_count: number;
   active: boolean;
   attributes?: Record<string, unknown>;
+  verified_promotion?: VerifiedPromotionSummary | null;
+  explanation?: string | null;
+  explanation_source?: "ollama" | "retry" | "deterministic_fallback" | null;
+  memory_influence?: string | null;
+}
+
+export interface VerifiedPromotionSummary {
+  promotion_id: string;
+  label: string;
+  discount_type: "percent" | "amount";
+  discount_value: number;
+  original_price: number;
+  promotional_price: number;
+  savings: number;
+  valid_until: string;
+  terms_summary: string | null;
+  verified: boolean;
 }
 
 /**
@@ -43,6 +60,21 @@ export interface FulfillmentOption {
   substitute_for: string | null;
   delivery_min_days: number | null;
   delivery_max_days: number | null;
+}
+
+export interface FulfillmentEvidence {
+  verified: boolean;
+  availability_type: "selected_store" | "nearby_store" | "network" | "delivery";
+  product_id: string;
+  store_id: string | null;
+  store_name: string | null;
+  quantity: number | null;
+  pickup_available: boolean | null;
+  delivery_available: boolean | null;
+  delivery_estimate: string | null;
+  estimate_type: "prototype" | "carrier" | null;
+  checked_at: string | null;
+  evidence_ids: string[];
 }
 
 export interface RequestedLocation {
@@ -72,6 +104,10 @@ export interface ExternalOfferSummary {
   match_reason: string;
   source_product_id: string | null;
   matched_identifier_type: string | null;
+  observed_at?: string | null;
+  same_product_verified?: boolean;
+  affiliate_disclosure?: string;
+  evidence_ids?: string[];
   relevance_score: number;
   disclosure: string;
 }
@@ -194,12 +230,96 @@ export interface ChatResponse {
   status: WorkflowStatus;
   answer: string | null;
   products: ProductSummary[];
+  product_groups?: ProductGroup[];
+  missing_product_targets?: MissingProductTarget[];
   fulfillment_options: FulfillmentOption[];
+  fulfillment_evidence?: FulfillmentEvidence[];
   requested_location?: RequestedLocation | null;
   external_offers: ExternalOfferSummary[];
   order?: OrderStatusView | null;
   activity_events: string[];
   errors: ChatError[];
+  approved_claims?: Array<Record<string, unknown>>;
+  request_id?: string | null;
+  assistant_message_id?: string | null;
+  message_type?: ConversationMessageType;
+  product_ids?: string[];
+  suggested_actions?: SuggestedAction[];
+  quick_replies?: SuggestedAction[];
+  protected_action?: ProtectedActionConfirmationCard | null;
+}
+
+export type ConversationRole = "user" | "assistant" | "system";
+export type ConversationMessageType =
+  | "text"
+  | "clarification"
+  | "recommendation"
+  | "fulfillment"
+  | "order_status"
+  | "partial_result"
+  | "safe_failure";
+export type ConversationMessageStatus = "pending" | "streaming" | "completed" | "failed" | "canceled";
+
+export interface SuggestedAction {
+  action_id: string;
+  label: string;
+  query: string;
+}
+
+export interface ConversationMessage {
+  message_id: string;
+  session_id: string;
+  request_id: string;
+  role: ConversationRole;
+  message_type: ConversationMessageType;
+  content: string;
+  status: ConversationMessageStatus;
+  created_at: string;
+  product_ids: string[];
+  order_id: string | null;
+  approved_claims: Array<Record<string, unknown>>;
+  suggested_actions: SuggestedAction[];
+  response?: ChatResponse | null;
+  activities?: ActivityEvent[];
+  feedback?: "helpful" | "not_helpful" | null;
+}
+
+export interface ProtectedActionConfirmationCard {
+  confirmation_id: string;
+  action_type: string;
+  resource_type: string;
+  resource_id: string;
+  proposal_summary: string;
+  customer_effects: string[];
+  financial_effects: string[];
+  eligibility_status: string;
+  eligibility_reason_code: string;
+  expires_at: string;
+}
+
+export interface ProtectedActionResult {
+  confirmation_id: string;
+  action_type: string;
+  execution_status: "verified" | "rejected" | "expired" | "failed";
+  resource_id: string;
+  result_state: string;
+  request_id: string | null;
+  verified_at: string;
+  evidence_ids: string[];
+  message: string;
+  payment_handoff?: Record<string, unknown> | null;
+}
+
+export interface ProductGroup {
+  target_label: string;
+  products: ProductSummary[];
+  missing: boolean;
+  message: string | null;
+}
+
+export interface MissingProductTarget {
+  label: string;
+  message: string | null;
 }
 
 /** scout/api/schemas/events.py::EventType */

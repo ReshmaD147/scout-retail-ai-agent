@@ -23,9 +23,15 @@ describe("ProductGrid", () => {
   });
 
   it("uses only backend product fields for visible category tags", () => {
-    render(<ProductGrid products={[products[0]]} fulfillmentOptions={[]} />);
+    const { container } = render(<ProductGrid products={[products[0]]} fulfillmentOptions={[]} />);
+    expect(container.querySelector(".product-grid--single")).toBeInTheDocument();
     expect(screen.getByText("Footwear")).toBeInTheDocument();
     expect(screen.getByText("Work")).toBeInTheDocument();
     expect(screen.queryByText("Memory Foam")).not.toBeInTheDocument();
+  });
+
+  it("keeps multi-result responses in the standard grid layout", () => {
+    const { container } = render(<ProductGrid products={products.slice(0, 2)} fulfillmentOptions={[]} />);
+    expect(container.querySelector(".product-grid--single")).not.toBeInTheDocument();
   });
 });

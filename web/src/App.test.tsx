@@ -39,6 +39,34 @@ vi.mock("./hooks/useCart", () => ({
   }),
 }));
 
+vi.mock("./hooks/useSavedProducts", () => ({
+  useSavedProducts: () => ({
+    saved: { session_id: "s-1", customer_id: null, saved_product_ids: [], products: [], count: 0 },
+    savedIds: new Set<string>(),
+    count: 0,
+    isLoading: false,
+    errorMessage: null,
+    refresh: vi.fn().mockResolvedValue(undefined),
+    toggle: vi.fn().mockResolvedValue(undefined),
+    dismissError: vi.fn(),
+  }),
+}));
+
+vi.mock("./hooks/useMemorySettings", () => ({
+  useMemorySettings: () => ({
+    preferences: [],
+    isEnabled: true,
+    isLoading: false,
+    errorMessage: null,
+    refresh: vi.fn().mockResolvedValue(undefined),
+    save: vi.fn().mockResolvedValue(undefined),
+    remove: vi.fn().mockResolvedValue(undefined),
+    clearAll: vi.fn().mockResolvedValue(undefined),
+    setEnabled: vi.fn().mockResolvedValue(undefined),
+    clearSession: vi.fn().mockResolvedValue(undefined),
+  }),
+}));
+
 /**
  * Integration tests for Scout's main shopping interface (Step 14).
  * `global.fetch` is stubbed per test so no real network call is ever
@@ -163,6 +191,28 @@ const completedResponse: ChatResponse = {
   errors: [],
 };
 
+const groupedResponse: ChatResponse = {
+  ...completedResponse,
+  answer: "I found work shoes under $100. I could not verify a matching product for: work bag.",
+  product_groups: [
+    {
+      target_label: "work shoes",
+      products: completedResponse.products,
+      missing: false,
+      message: null,
+    },
+    {
+      target_label: "work bag",
+      products: [],
+      missing: true,
+      message: "No verified catalog product matched this part of the request.",
+    },
+  ],
+  missing_product_targets: [
+    { label: "work bag", message: "No verified catalog product matched this part of the request." },
+  ],
+};
+
 describe("Scout shopping interface", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -201,6 +251,27 @@ describe("Scout shopping interface", () => {
     expect(button).toBeDisabled();
     await user.click(button);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+
+  it("routes floating assistant quick actions through Scout chat", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockResolvedValueOnce(
+      makeStreamResponse([finalResponseFrame(1, { ...completedResponse, products: [], answer: "Policy answer" }), streamClosedFrame(2)])
+    );
+
+    render(<App />);
+    await user.click(screen.getByRole("button", { name: "Need help?" }));
+    expect(screen.getByRole("dialog", { name: /how scout can help/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Returns & refunds" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toContain("/chat/stream");
+    const body = JSON.parse(init.body as string);
+    expect(body.message).toBe("What is Scout's returns and refunds policy?");
+    expect(body.filters).toEqual({ in_stock_only: true });
   });
 
   it("sends the request correctly (scenario 4)", async () => {
@@ -309,10 +380,24 @@ describe("Scout shopping interface", () => {
     await screen.findByText("ComfortPro Shift Support");
     await user.click(screen.getByRole("button", { name: "Show progress" }));
 
-    expect(screen.getByText("Understanding request")).toBeInTheDocument();
-    expect(screen.getByText("Searching catalog")).toBeInTheDocument();
-    expect(screen.getByText("Checking selected store")).toBeInTheDocument();
-    expect(screen.queryByText("Searching the product catalog")).not.toBeInTheDocument();
+    expect(screen.getByText("Understanding your request")).toBeInTheDocument();
+    expect(screen.getByText("Searching the product catalog")).toBeInTheDocument();
+    expect(screen.getByText("Checking Maple Grove inventory")).toBeInTheDocument();
+  });
+
+  it("renders grouped multi-item results with missing targets honestly", async () => {
+    const user = userEvent.setup();
+    fetchMock.mockResolvedValueOnce(
+      makeStreamResponse([finalResponseFrame(1, groupedResponse), streamClosedFrame(2)])
+    );
+
+    render(<App />);
+    await user.type(screen.getByLabelText(/what are you looking for/i), "Work shoes under $100 and work bag");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(await screen.findByRole("heading", { name: "Work Shoes" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Work Bag" })).toBeInTheDocument();
+    expect(screen.getByText(/No verified catalog product matched this part/i)).toBeInTheDocument();
   });
 
   it("deduplicates repeated customer-safe activity events", async () => {
@@ -348,8 +433,7 @@ describe("Scout shopping interface", () => {
     await screen.findByText("ComfortPro Shift Support");
     await user.click(screen.getByRole("button", { name: "Show progress" }));
 
-    expect(screen.getAllByText("Searching catalog")).toHaveLength(1);
-    expect(screen.queryByText("Searching the product catalog")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Searching the product catalog")).toHaveLength(1);
   });
 
   it("shows the clarification state (scenario 11)", async () => {
@@ -360,9 +444,24 @@ describe("Scout shopping interface", () => {
       answer: "Could you tell me what product you're looking for, your budget, and which store or area you'd like to check?",
       products: [],
       fulfillment_options: [],
+      message_type: "clarification",
+      quick_replies: [{ action_id: "under-50", label: "Under $50", query: "Under $50" }],
+      suggested_actions: [{ action_id: "show-cheaper", label: "Show cheaper options", query: "Show me cheaper options" }],
     };
     fetchMock.mockResolvedValueOnce(
-      makeStreamResponse([finalResponseFrame(1, clarificationResponse), streamClosedFrame(2)])
+      makeStreamResponse([
+        sseFrame("clarification_required", 1, {
+          event_id: 1,
+          event_type: "clarification_required",
+          workflow_id: "wf-1",
+          session_id: "s-1",
+          label: "Scout needs more information",
+          data: { question: clarificationResponse.answer },
+          timestamp: "2026-01-01T00:00:00Z",
+        }),
+        finalResponseFrame(2, clarificationResponse),
+        streamClosedFrame(3),
+      ])
     );
 
     render(<App />);
@@ -371,6 +470,9 @@ describe("Scout shopping interface", () => {
 
     expect(await screen.findByText(/scout needs a bit more information/i)).toBeInTheDocument();
     expect(screen.getByText(/could you tell me what product/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Under $50" })).toBeInTheDocument();
+    expect(screen.queryByText("Scout needs more information")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show cheaper options" })).not.toBeInTheDocument();
   });
 
   it("shows the no-results state (scenario 12)", async () => {
@@ -507,6 +609,10 @@ describe("Scout shopping interface", () => {
           match_reason: "Matches comfort and standing needs.",
           source_product_id: null,
           matched_identifier_type: null,
+          observed_at: "2026-07-23T20:00:00Z",
+          same_product_verified: false,
+          affiliate_disclosure: "Demo external offer. External checkout is handled by the retailer.",
+          evidence_ids: ["external-offer-EXT-OFF-001"],
           relevance_score: 0.8,
           disclosure: "Demo external offer. External checkout is handled by the retailer.",
         },
@@ -521,7 +627,9 @@ describe("Scout shopping interface", () => {
     await user.click(screen.getByRole("button", { name: "Search" }));
 
     expect(await screen.findByText("ShiftEase All-Day Work Shoe")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "View at retailer" })).toBeInTheDocument();
+    expect(screen.getByText("External alternatives")).toBeInTheDocument();
+    expect(screen.getByText(/Scout may earn a referral commission/i)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open retailer" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Add to cart" })).not.toBeInTheDocument();
   });
 
@@ -599,6 +707,30 @@ describe("Scout shopping interface", () => {
     expect(screen.getByText("ComfortPro Shift Support")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Pickup summary" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /cancel|return|exchange/i })).not.toBeInTheDocument();
+  });
+
+  it("does not duplicate order not-found answer and matching error", async () => {
+    const user = userEvent.setup();
+    const notFoundResponse: ChatResponse = {
+      ...completedResponse,
+      status: "completed",
+      answer: "No order was found for this shopping session.",
+      products: [],
+      fulfillment_options: [],
+      order: null,
+      errors: [{ code: "NOT_FOUND", message: "No order was found for this shopping session." }],
+      message_type: "order_status",
+    };
+    fetchMock.mockResolvedValueOnce(
+      makeStreamResponse([finalResponseFrame(1, notFoundResponse), streamClosedFrame(2)])
+    );
+
+    render(<App />);
+    await user.type(screen.getByLabelText(/what are you looking for/i), "Where is my order?");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+
+    expect(await screen.findByRole("heading", { name: "Scout's answer" })).toBeInTheDocument();
+    expect(screen.getAllByText("No order was found for this shopping session.")).toHaveLength(1);
   });
 
   it("exposes accessibility labels and live regions (scenario 19)", async () => {

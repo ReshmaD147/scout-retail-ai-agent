@@ -149,6 +149,7 @@ const oneItemCart: CartView = {
 };
 
 const stores: StoreSummary[] = [];
+const emptySaved = { session_id: "s-1", customer_id: null, saved_product_ids: [], products: [], count: 0 };
 
 /** Routes each fetch call to the right canned response by URL/method,
  * since App now issues several concurrent requests on mount (the cart
@@ -194,6 +195,7 @@ describe("Scout cart UI", () => {
       routeFetch([
         { match: (url, init) => url.includes("/cart/items") && init?.method === "POST", respond: () => makeJsonResponse(oneItemCart) },
         { match: (url, init) => url.includes("/cart/") && !init?.method, respond: () => makeJsonResponse(emptyCart) },
+        { match: (url) => url.includes("/saved-products"), respond: () => makeJsonResponse(emptySaved) },
         { match: (url) => url.includes("/stores"), respond: () => makeJsonResponse(stores) },
         { match: (url) => url.includes("/chat/stream"), respond: () => makeStreamResponse([finalResponseFrame(1, completedResponse), streamClosedFrame(2)]) },
       ])
@@ -232,6 +234,7 @@ describe("Scout cart UI", () => {
       routeFetch([
         { match: (url, init) => url.includes("/cart/items/") && init?.method === "PATCH", respond: () => makeJsonResponse(updatedCart) },
         { match: (url, init) => /\/cart\/[^/]+$/.test(url) && !init?.method, respond: () => makeJsonResponse(oneItemCart) },
+        { match: (url) => url.includes("/saved-products"), respond: () => makeJsonResponse(emptySaved) },
         { match: (url) => url.includes("/stores"), respond: () => makeJsonResponse(stores) },
       ])
     );

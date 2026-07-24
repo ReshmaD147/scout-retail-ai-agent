@@ -331,7 +331,7 @@ def substitute_search_node(state: RetailGraphState) -> Dict[str, Any]:
     errors: List[WorkflowError] = []
     tool_results: List[ToolCallTrace] = []
 
-    for product_id in needing:
+    for product_id in needing[:1]:
         try:
             result = find_available_substitutes(product_id=product_id, store_id=store_id)
         except sqlite3.Error:

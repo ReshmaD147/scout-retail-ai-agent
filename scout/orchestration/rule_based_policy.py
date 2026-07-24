@@ -27,7 +27,36 @@ class RuleBasedSupervisorPolicy:
 
     def decide(self, state: RetailGraphState) -> SupervisorDecision:
         intent = state.intent or {}
+        if intent.get("request_type") == "policy":
+            if state.policy_results and state.final_response:
+                return SupervisorDecision(
+                    decision="verification",
+                    goal="answer the public policy question from active policy evidence",
+                    decision_summary="policy evidence is ready for verification",
+                )
+            return SupervisorDecision(
+                decision="support",
+                goal="answer the public policy question from active policy evidence",
+                decision_summary="public policy question detected; routing to the Policy Q&A Agent",
+                plan=[PlanStep(step_id="policy_retrieval", description="retrieve active policy sections", agent="support")],
+                needs_multiple_agents=False,
+            )
+
         if intent.get("request_type") == "order":
+            if state.order_context is not None and intent.get("needs_policy") and not state.policy_results:
+                return SupervisorDecision(
+                    decision="support",
+                    goal="combine private order evidence with relevant public policy",
+                    decision_summary="order evidence is verified; retrieving relevant policy context",
+                    plan=[PlanStep(step_id="policy_context", description="retrieve active policy context", agent="support")],
+                    needs_multiple_agents=True,
+                )
+            if state.order_context is not None and state.proposed_claims:
+                return SupervisorDecision(
+                    decision="verification",
+                    goal="verify private order support evidence before responding",
+                    decision_summary="private order evidence is ready for verification",
+                )
             if state.order_context is not None or state.final_response:
                 return SupervisorDecision(
                     decision="finish",
@@ -110,6 +139,12 @@ class RuleBasedSupervisorPolicy:
                     decision_summary="internal options are insufficient; routing to external offers",
                 )
             if any(trace.tool_name == "semantic_search_products" for trace in state.tool_results):
+                if not any(trace.tool_name == "search_external_offers" for trace in state.tool_results):
+                    return SupervisorDecision(
+                        decision="support",
+                        goal=state.goal or f"find {category or subcategory or 'a matching product'} within budget",
+                        decision_summary="internal product search returned no matches; routing to external offers",
+                    )
                 return SupervisorDecision(
                     decision="verification",
                     goal=state.goal or f"find {category or 'a matching product'} within budget",

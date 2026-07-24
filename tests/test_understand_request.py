@@ -117,6 +117,39 @@ def test_extracts_order_request_and_uuid_without_product_search():
     assert update["intent"]["extraction_source"] == "deterministic_fallback"
 
 
+def test_extracts_damaged_item_return_with_human_order_id_without_product_search():
+    state = _state(
+        customer_query="Can I return the coffee maker from order ORD-1005? It arrived damaged."
+    )
+
+    update = understand_request_node(state)
+
+    assert update["intent"]["request_type"] == "order"
+    assert update["intent"]["order_id"] == "ORD-1005"
+    assert update["intent"]["order_action"] == "return_eligibility"
+    assert update["intent"]["extraction_source"] == "deterministic_fallback"
+    assert "category" not in update["intent"]
+
+
+def test_order_support_signal_overrides_mistaken_llm_product_search(fake_llm):
+    fake_llm(
+        StructuredIntent(
+            request_type="product_search",
+            product_type="Coffee Makers",
+            category="Home and Kitchen",
+        )
+    )
+
+    intent = understand_request_node(
+        _state(customer_query="Can I return the coffee maker from order ORD-1005? It arrived damaged.")
+    )["intent"]
+
+    assert intent["request_type"] == "order"
+    assert intent["order_id"] == "ORD-1005"
+    assert intent["order_action"] == "return_eligibility"
+    assert intent["extraction_source"] == "deterministic_fallback"
+
+
 def test_extracts_exact_product_type_and_deals_constraint():
     earbuds = understand_request_node(_state(customer_query="Wireless earbuds"))["intent"]
     assert earbuds["category"] == "Electronics"

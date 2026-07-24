@@ -38,7 +38,6 @@ INVENTORY_TOOL_NAMES: Set[str] = {
 EXTERNAL_OFFER_TOOL_NAMES: Set[str] = {
     "search_external_offers",
     "get_external_offer_details",
-    "track_affiliate_click",
 }
 
 ORDER_READ_ONLY_TOOL_NAMES: Set[str] = {
@@ -154,11 +153,29 @@ def _has_verified_pickup_stock(state: RetailGraphState, arguments: Dict[str, Any
 
 
 def _internal_options_insufficient(state: RetailGraphState) -> bool:
+    intent = state.intent or {}
+    query = state.customer_query.lower()
+    if any(term in query for term in ("external", "other retailer", "retailer", "elsewhere", "outside scout")):
+        return True
     if state.external_offers:
         return True
     if not state.product_candidates:
-        return True
-    return not any(entry.get("sellable_quantity", 0) > 0 for entry in state.inventory_results)
+        return bool(intent.get("category") or intent.get("subcategory") or intent.get("max_price"))
+    if any(entry.get("sellable_quantity", 0) > 0 for entry in state.inventory_results):
+        return False
+    successful_inventory_checks = {
+        trace.tool_name
+        for trace in state.tool_results
+        if trace.status == "success"
+        and trace.tool_name in {
+            "check_store_inventory",
+            "find_nearby_inventory",
+            "check_network_inventory",
+            "get_delivery_estimate",
+            "find_available_substitutes",
+        }
+    }
+    return bool(successful_inventory_checks)
 
 
 def _validate_preconditions(agent_name: AgentName, tool_name: str, arguments: Dict[str, Any], state: RetailGraphState) -> Optional[str]:

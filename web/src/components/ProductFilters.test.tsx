@@ -15,6 +15,7 @@ vi.mock("../hooks/useCatalogFilters", () => ({
     },
     isLoading: false,
     errorMessage: null,
+    retry: vi.fn(),
   }),
 }));
 
@@ -45,5 +46,16 @@ describe("ProductFilters", () => {
     render(<ProductFilters value={{ category: "Electronics", in_stock_only: true }} onApply={onApply} />);
     await user.click(screen.getByRole("button", { name: "Clear all" }));
     expect(onApply).toHaveBeenCalledWith({ in_stock_only: true });
+  });
+
+  it("allows local clearing before a query but blocks applying filters", async () => {
+    const user = userEvent.setup();
+    const onApply = vi.fn();
+    render(<ProductFilters value={{ category: "Electronics", in_stock_only: true }} canApply={false} onApply={onApply} />);
+
+    expect(screen.getByRole("button", { name: "Search first to apply filters" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Clear all" }));
+    expect(onApply).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Category")).toHaveValue("");
   });
 });

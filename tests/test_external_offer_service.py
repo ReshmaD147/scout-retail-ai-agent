@@ -39,6 +39,20 @@ def test_external_budget_is_a_hard_filter(seeded_db_path):
     assert "EXT-OFF-001" not in {offer.offer_id for offer in offers}
 
 
+def test_finds_under_budget_external_briefcase_when_internal_option_is_too_expensive(seeded_db_path):
+    offers = search_external_offers(
+        query_text="Find executive briefcase under $80 near Maple Grove.",
+        category="Bags",
+        max_price=80,
+        db_path=seeded_db_path,
+    )
+
+    assert offers
+    assert offers[0].offer_id == "EXT-OFF-010"
+    assert offers[0].price <= 80
+    assert offers[0].match_type == "similar"
+
+
 def test_exact_label_requires_matching_identifier(seeded_db_path):
     without_identifier = search_external_offers(
         query_text="all day work shoe",

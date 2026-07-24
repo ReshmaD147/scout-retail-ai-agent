@@ -253,3 +253,13 @@ def test_llm_sanitization_drops_unmentioned_ids_prices_and_locations():
     assert result.intent.reference_product_id is None
     assert result.intent.comparison_product_ids == ["FTW-001"]
     assert result.intent.order_id is None
+
+
+def test_llm_sanitization_preserves_human_readable_order_ids():
+    result = extract_intent_with_ollama(
+        "Can I return the coffee maker from order ORD-1005? It arrived damaged.",
+        client=_FakeClient([_intent_payload(request_type="order_eligibility", order_id="ord-1005")]),
+    )
+
+    assert result.intent.request_type == "order_eligibility"
+    assert result.intent.order_id == "ORD-1005"

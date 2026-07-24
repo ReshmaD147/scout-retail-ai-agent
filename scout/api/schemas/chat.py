@@ -17,7 +17,7 @@ of that state itself. `products` reuses `ProductSummary`
 product shape every other tool in this codebase returns.
 """
 
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -142,6 +142,14 @@ class ChatError(BaseModel):
     message: str
 
 
+class SuggestedAction(BaseModel):
+    """One safe follow-up the UI may submit through the real chat endpoint."""
+
+    action_id: str
+    label: str
+    query: str
+
+
 class FulfillmentOption(BaseModel):
     """One grounded way to get a specific product, for the customer to compare.
 
@@ -166,6 +174,27 @@ class FulfillmentOption(BaseModel):
     delivery_max_days: Optional[int] = None
 
 
+class FulfillmentEvidence(BaseModel):
+    """One verified fulfillment fact safe for UI rendering.
+
+    Unlike workflow activity, this is a result: it is built only from
+    inventory evidence that survived response verification.
+    """
+
+    verified: bool = True
+    availability_type: Literal["selected_store", "nearby_store", "network", "delivery"]
+    product_id: str
+    store_id: Optional[str] = None
+    store_name: Optional[str] = None
+    quantity: Optional[int] = None
+    pickup_available: Optional[bool] = None
+    delivery_available: Optional[bool] = None
+    delivery_estimate: Optional[str] = None
+    estimate_type: Optional[Literal["prototype", "carrier"]] = None
+    checked_at: Optional[str] = None
+    evidence_ids: List[str] = Field(default_factory=list)
+
+
 class RequestedLocation(BaseModel):
     """A customer-safe map point resolved from the request.
 
@@ -177,6 +206,19 @@ class RequestedLocation(BaseModel):
     label: str
     latitude: float
     longitude: float
+
+
+class ProtectedActionConfirmationCard(BaseModel):
+    confirmation_id: str
+    action_type: str
+    resource_type: str
+    resource_id: str
+    proposal_summary: str
+    customer_effects: List[str] = Field(default_factory=list)
+    financial_effects: List[str] = Field(default_factory=list)
+    eligibility_status: str
+    eligibility_reason_code: str
+    expires_at: str
 
 
 class ChatResponse(BaseModel):
@@ -195,7 +237,10 @@ class ChatResponse(BaseModel):
     there is genuinely nothing safe to say yet (should not normally
     happen once workflow_status is terminal/paused)."""
     products: List[ProductSummary] = Field(default_factory=list)
+    product_groups: List[Dict[str, Any]] = Field(default_factory=list)
+    missing_product_targets: List[Dict[str, Any]] = Field(default_factory=list)
     fulfillment_options: List[FulfillmentOption] = Field(default_factory=list)
+    fulfillment_evidence: List[FulfillmentEvidence] = Field(default_factory=list)
     requested_location: Optional[RequestedLocation] = None
     external_offers: List[ExternalOfferSummary] = Field(default_factory=list)
     """Mock merchant alternatives returned only when no internal option is fulfillable."""
@@ -207,3 +252,22 @@ class ChatResponse(BaseModel):
     raw output, a model's reasoning, or a prompt. See
     scout/api/routes/chat.py's _build_activity_events."""
     errors: List[ChatError] = Field(default_factory=list)
+    approved_claims: List[Dict[str, Any]] = Field(default_factory=list)
+    """Structured claims approved by the verification gate. Empty when
+    no customer-facing verified claim details are available."""
+    request_id: Optional[str] = None
+    """Client/server correlation id for one UI message. Optional for backward compatibility."""
+    assistant_message_id: Optional[str] = None
+    message_type: Literal[
+        "text",
+        "clarification",
+        "recommendation",
+        "fulfillment",
+        "order_status",
+        "partial_result",
+        "safe_failure",
+    ] = "text"
+    product_ids: List[str] = Field(default_factory=list)
+    suggested_actions: List[SuggestedAction] = Field(default_factory=list)
+    quick_replies: List[SuggestedAction] = Field(default_factory=list)
+    protected_action: Optional[ProtectedActionConfirmationCard] = None

@@ -1,0 +1,1 @@
+"""Scout evaluation utilities."""

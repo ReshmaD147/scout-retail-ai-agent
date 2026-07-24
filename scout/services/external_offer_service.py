@@ -199,6 +199,10 @@ def search_external_offers(
                 match_reason=match_reason,
                 source_product_id=reference_product_id,
                 matched_identifier_type=exact_identifier,
+                observed_at=offer.updated_at,
+                same_product_verified=match_type == "exact" and exact_identifier is not None,
+                affiliate_disclosure=AFFILIATE_DISCLOSURE,
+                evidence_ids=[f"external-offer-{offer.offer_id}"],
                 relevance_score=round(score, 6),
                 disclosure=AFFILIATE_DISCLOSURE,
             )

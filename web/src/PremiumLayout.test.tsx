@@ -64,6 +64,19 @@ vi.mock("./hooks/useCart", () => ({
   }),
 }));
 
+vi.mock("./hooks/useSavedProducts", () => ({
+  useSavedProducts: () => ({
+    saved: { session_id: "layout-session", customer_id: null, saved_product_ids: [], products: [], count: 0 },
+    savedIds: new Set<string>(),
+    count: 0,
+    isLoading: false,
+    errorMessage: null,
+    refresh: vi.fn(),
+    toggle: vi.fn(),
+    dismissError: vi.fn(),
+  }),
+}));
+
 describe("Premium Scout layout", () => {
   it("renders the three-column shell content and sidebar navigation", () => {
     const { container } = render(<App />);
@@ -85,14 +98,15 @@ describe("Premium Scout layout", () => {
 
     expect(screen.getByRole("button", { name: "Deals" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Categories" })).toBeEnabled();
-    expect(screen.getByRole("button", { name: "Saved" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Saved/ })).toBeEnabled();
 
     await user.click(screen.getByRole("button", { name: "Categories" }));
     expect(screen.getByRole("dialog", { name: "Browse categories" })).toBeInTheDocument();
     await user.click(screen.getByLabelText("Close categories"));
 
-    await user.click(screen.getByRole("button", { name: "Saved" }));
-    expect(screen.getByRole("dialog", { name: "Saved products" })).toHaveTextContent(/not part of the current backend yet/i);
+    await user.click(screen.getByRole("button", { name: /Saved/ }));
+    expect(screen.getByRole("heading", { name: "Saved products" })).toBeInTheDocument();
+    expect(screen.getByText("You have not saved any products yet.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Clear all" })).toBeDisabled();
   });
 });

@@ -18,7 +18,12 @@ from typing import Any, Dict, List, Optional
 from scout.mcp.store_tools import find_store_by_location
 from scout.orchestration.limits import check_step_budget
 from scout.orchestration.state import EvidenceEntry, RetailGraphState, WorkflowError
-from scout.services.intent_service import StructuredIntent, extract_intent_with_ollama
+from scout.services.intent_service import (
+    IntentExtractionResult,
+    StructuredIntent,
+    extract_intent_with_ollama,
+    normalize_order_id,
+)
 
 # Deliberately small and literal: real category/attribute extraction is
 # the Recommendation Agent's job once Phase 5 (Ollama integration)
@@ -38,6 +43,7 @@ _CATEGORY_KEYWORDS = {
     "bag": "Bags",
     "tote": "Bags",
     "duffel": "Bags",
+    "briefcase": "Bags",
     "earbuds": "Electronics",
     "earbud": "Electronics",
     "speaker": "Electronics",
@@ -100,17 +106,73 @@ _LOCATION_PATTERN = re.compile(
 )
 _PICKUP_PATTERN = re.compile(r"pick[\s-]?up", re.IGNORECASE)
 _ORDER_ID_PATTERN = re.compile(
-    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
+    r"\b(?:[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}|ORD-\d{3,10})\b",
     re.IGNORECASE,
 )
 _ORDER_REQUEST_PATTERN = re.compile(
-    r"\b(order|tracking|track|payment status|where is my order|cancel|cancellation|return|exchange)\b",
+    r"\b(order|tracking|track|shipment|shipping|payment status|refund status|return request|missing package|marked delivered|complaint|investigation|where is my order|cancel|cancellation|return|exchange)\b",
     re.IGNORECASE,
 )
 _DEALS_PATTERN = re.compile(r"\b(deal|deals|discount|discounted|sale|promotion|promotions)\b", re.IGNORECASE)
+_POLICY_PATTERN = re.compile(r"\b(policy|policies|return window|refund|refunds|opened moisturizer|missing package|marked delivered|warranty|warranties|price match|gift card|online purchases.*returned in store)\b", re.IGNORECASE)
+_ORDER_CONTEXT_PATTERN = re.compile(r"\b(my order|order id|where is my order|tracking|track|payment status|cancel my|return my|exchange my)\b", re.IGNORECASE)
+
+
+def _extract_product_targets(query: str) -> List[Dict[str, Any]]:
+    query_lower = query.lower()
+    cleaned = re.sub(_BUDGET_PATTERN, "", query_lower)
+    cleaned = re.sub(_LOCATION_PATTERN, "", cleaned)
+    cleaned = re.sub(r"\b(that i can|i can|can i|pick[\s-]?up|today|this week|near)\b", " ", cleaned)
+    parts = [part.strip(" .,!?") for part in re.split(r"\s+(?:and|also|plus|with)\s+", cleaned) if part.strip(" .,!?")]
+    targets: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for part in parts:
+        category = _extract_category(part)
+        product_type = _extract_subcategory(part)
+        if category is None and product_type is None:
+            continue
+        label = part.strip()
+        key = f"{category}:{product_type}:{label}"
+        if key in seen:
+            continue
+        seen.add(key)
+        targets.append(
+            {
+                "label": label,
+                "query_text": label,
+                "category": category,
+                "subcategory": product_type,
+                "keyword": None,
+            }
+        )
+    return targets
 
 
 def _extract_order_action(query_lower: str) -> str:
+    if "missing package" in query_lower or "marked delivered" in query_lower:
+        return "missing_package"
+    if "complaint" in query_lower or "investigation" in query_lower:
+        return "complaint_investigation"
+    if "change" in query_lower and "address" in query_lower:
+        return "change_order_address"
+    if "request refund" in query_lower or "refund my order" in query_lower:
+        return "create_refund_request"
+    if "create return" in query_lower or "submit return" in query_lower or "return my order" in query_lower:
+        return "create_return_request"
+    if "create exchange" in query_lower or "submit exchange" in query_lower or "exchange my order" in query_lower:
+        return "create_exchange_request"
+    if (
+        query_lower.startswith("cancel ")
+        or "please cancel" in query_lower
+        or re.search(r"\bcancel\s+order\s+\w", query_lower)
+    ):
+        return "cancel_order"
+    if "refund" in query_lower:
+        return "refund_status"
+    if "return request" in query_lower:
+        return "return_request_status"
+    if "shipment" in query_lower or "shipping" in query_lower or "shipped" in query_lower:
+        return "shipment_status"
     if "cancel" in query_lower:
         return "cancel_eligibility"
     if "return" in query_lower:
@@ -162,12 +224,20 @@ def _extract_pickup_requested(query: str) -> bool:
 def _deterministic_structured_intent(query: str) -> StructuredIntent:
     query_lower = query.lower()
     order_match = _ORDER_ID_PATTERN.search(query)
+    if _POLICY_PATTERN.search(query_lower) and not order_match and not _ORDER_CONTEXT_PATTERN.search(query_lower):
+        return StructuredIntent(
+            request_type="policy",
+            use_case=query.strip(),
+            needs_clarification=False,
+            confidence=0.7,
+        )
+
     if _ORDER_REQUEST_PATTERN.search(query_lower):
         order_action = _extract_order_action(query_lower)
         request_type = "order_eligibility" if order_action.endswith("_eligibility") else "order_status"
         return StructuredIntent(
             request_type=request_type,
-            order_id=order_match.group(0).lower() if order_match else None,
+            order_id=normalize_order_id(order_match.group(0)) if order_match else None,
             needs_clarification=False,
             confidence=0.7,
         )
@@ -195,6 +265,7 @@ def _deterministic_structured_intent(query: str) -> StructuredIntent:
         product_type=product_type,
         category=category,
         use_case=_extract_keyword(query_lower),
+        requested_products=_extract_product_targets(query),
         budget_max=budget_max,
         location=location,
         fulfillment_preference="pickup" if pickup_requested else None,
@@ -206,6 +277,15 @@ def _deterministic_structured_intent(query: str) -> StructuredIntent:
 
 def _legacy_intent_from_structured(structured: StructuredIntent, query: str) -> Dict[str, Any]:
     query_lower = query.lower()
+    if structured.request_type == "policy":
+        return {
+            "request_type": "policy",
+            "policy_query": query,
+            "structured_intent": structured.model_dump(mode="json"),
+            "needs_clarification": structured.needs_clarification,
+            "clarification_question": structured.clarification_question,
+        }
+
     if structured.request_type in {"order_status", "order_eligibility"}:
         order_action = _extract_order_action(query_lower)
         if structured.request_type == "order_eligibility" and order_action == "status":
@@ -239,6 +319,7 @@ def _legacy_intent_from_structured(structured: StructuredIntent, query: str) -> 
         "structured_intent": structured.model_dump(mode="json"),
         "needs_clarification": structured.needs_clarification,
         "clarification_question": structured.clarification_question,
+        "product_targets": structured.requested_products or _extract_product_targets(query),
     }
 
 
@@ -261,10 +342,15 @@ def understand_request_node(state: RetailGraphState) -> Dict[str, Any]:
     query = state.customer_query
     deterministic = _deterministic_structured_intent(query)
     extraction = extract_intent_with_ollama(query, fallback_intent=deterministic)
+    if deterministic.request_type in {"order_status", "order_eligibility"} and extraction.intent.request_type not in {
+        "order_status",
+        "order_eligibility",
+    }:
+        extraction = IntentExtractionResult(intent=deterministic, extraction_source="deterministic_fallback")
     intent = _legacy_intent_from_structured(extraction.intent, query)
     intent["extraction_source"] = extraction.extraction_source
 
-    if intent["request_type"] == "order":
+    if intent["request_type"] in {"order", "policy"}:
         return {
             "step_count": state.step_count + 1,
             "intent": intent,

@@ -18,6 +18,7 @@ import pytest
 from scout.config import get_settings
 from scout.agents.response_verification import (
     _NO_RESULTS_MESSAGE,
+    _build_final_response,
     _final_response_unsupported_claim,
     _verify_against_catalog,
     _verify_inventory_and_store_claim,
@@ -283,6 +284,31 @@ def test_promotion_check_fails_for_a_promotion_that_does_not_exist():
     assert "not currently active" in issues[0].message
 
 
+def test_final_response_uses_approved_promotion_price_and_passes_grounding_guard():
+    approved_claims = [
+        {"type": "active_promotion", "product_id": "FTW-004", "promotion_id": "PRM-002"}
+    ]
+    verified = [
+        (
+            _product(),
+            {
+                "channel": "delivery",
+                "sellable_quantity": 7,
+                "delivery_min_days": 3,
+                "delivery_max_days": 5,
+            },
+        )
+    ]
+
+    response = _build_final_response(verified, evidence=[], approved_claims=approved_claims)
+    unsupported = _final_response_unsupported_claim(response, [_product()], approved_claims)
+
+    assert "ComfortPro Shift Support ($80.99 after verified promotion Workwear Comfort Event" in response
+    assert "was $89.99" in response
+    assert "save $9.00" in response
+    assert unsupported is None
+
+
 # ---------------------------------------------------------------------------
 # verify_proposed_claims - structured customer-facing claim checks
 # ---------------------------------------------------------------------------
@@ -495,7 +521,9 @@ def test_a_fully_grounded_candidate_produces_a_grounded_sentence():
     update = response_verification_node(state)
 
     assert update["workflow_status"] == "completed"
-    assert "ComfortPro Shift Support ($89.99)" in update["final_response"]
+    assert "ComfortPro Shift Support ($80.99 after verified promotion Workwear Comfort Event" in update["final_response"]
+    assert "was $89.99" in update["final_response"]
+    assert "save $9.00" in update["final_response"]
     assert "7 unit(s)" in update["final_response"]
     assert "Scout Demo Store - Plymouth" in update["final_response"]
     assert "errors" not in update

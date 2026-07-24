@@ -20,12 +20,15 @@ export interface ProductCardProps {
   /** One-based position from the backend-ranked products array. */
   resultPosition?: number;
   onAddToCart?: (productId: string) => void;
+  isSaved?: boolean;
+  onToggleSaved?: (productId: string) => void;
 }
 
-export function ProductCard({ product, fulfillmentOptions, resultPosition, onAddToCart }: ProductCardProps): JSX.Element {
+export function ProductCard({ product, fulfillmentOptions, resultPosition, onAddToCart, isSaved = false, onToggleSaved }: ProductCardProps): JSX.Element {
   const [imageAttempt, setImageAttempt] = useState(0);
   const imageSrc = getProductImageSrc(product.product_id, imageAttempt);
   const rankLabel = resultPosition === 1 ? "Best match" : resultPosition ? "Strong option" : null;
+  const promotion = product.verified_promotion?.verified ? product.verified_promotion : null;
 
   const handleImageError = (): void => {
     setImageAttempt((current) => current + 1);
@@ -35,7 +38,14 @@ export function ProductCard({ product, fulfillmentOptions, resultPosition, onAdd
     <article className="product-card">
       <div className="product-card__top-row">
         {rankLabel ? <span className={`product-card__match product-card__match--${resultPosition === 1 ? "best" : "strong"}`}>{rankLabel}</span> : <span />}
-        <button type="button" className="product-card__favorite" disabled aria-label={`Save ${product.name} is not available yet`}>
+        <button
+          type="button"
+          className={`product-card__favorite${isSaved ? " product-card__favorite--saved" : ""}`}
+          aria-label={isSaved ? `Remove ${product.name} from saved` : `Save ${product.name}`}
+          aria-pressed={isSaved}
+          onClick={() => onToggleSaved?.(product.product_id)}
+          disabled={!onToggleSaved}
+        >
           <HeartIcon />
         </button>
       </div>
@@ -60,8 +70,36 @@ export function ProductCard({ product, fulfillmentOptions, resultPosition, onAdd
           {product.rating !== null ? (
             <p className="product-card__rating"><span aria-hidden="true">★</span> {product.rating.toFixed(1)} ({product.review_count})</p>
           ) : <span />}
-          <p className="product-card__price">${product.price.toFixed(2)}</p>
+          {promotion ? (
+            <div className="product-card__price-block" aria-label={`Current price ${formatCurrency(promotion.promotional_price)}, original price ${formatCurrency(promotion.original_price)}`}>
+              <p className="product-card__price" aria-label={`Current price ${formatCurrency(promotion.promotional_price)}`}>{formatCurrency(promotion.promotional_price)}</p>
+              <p className="product-card__original-price">Original price <s>{formatCurrency(promotion.original_price)}</s></p>
+            </div>
+          ) : (
+            <p className="product-card__price" aria-label={`Current price ${formatCurrency(product.price)}`}>{formatCurrency(product.price)}</p>
+          )}
         </div>
+
+        {promotion && (
+          <div className="product-card__promotion" aria-label={`Verified promotion: ${promotion.label}`}>
+            <span className="product-card__promotion-badge">Verified promotion</span>
+            <strong>{promotion.label}</strong>
+            <p>{promotionText(promotion)} · Save {formatCurrency(promotion.savings)}</p>
+            <small>Valid through {formatDate(promotion.valid_until)}</small>
+            {promotion.terms_summary && <small>{promotion.terms_summary}</small>}
+          </div>
+        )}
+
+        {product.explanation && (
+          <section className="product-card__explanation" aria-label={`Why Scout selected ${product.name}`}>
+            <h4>Why Scout selected this</h4>
+            <p>{product.explanation}</p>
+          </section>
+        )}
+
+        {product.memory_influence && (
+          <p className="product-card__memory-note">{product.memory_influence}</p>
+        )}
 
         <div className="product-card__tags" aria-label="Verified product features">
           {verifiedFeatureLabels(product).map((tag) => <span key={tag}>{tag}</span>)}
@@ -71,14 +109,30 @@ export function ProductCard({ product, fulfillmentOptions, resultPosition, onAdd
           <FulfillmentInfo options={fulfillmentOptions} />
         </div>
 
-        {onAddToCart && (
-          <button type="button" className="product-card__add-to-cart" onClick={() => onAddToCart(product.product_id)}>
+        {onAddToCart && product.active && (
+          <button type="button" className="product-card__add-to-cart" title={`Add ${product.name} to cart`} onClick={() => onAddToCart(product.product_id)}>
             <CartIcon /> Add to cart
           </button>
         )}
       </div>
     </article>
   );
+}
+
+function formatCurrency(value: number): string {
+  return `$${value.toFixed(2)}`;
+}
+
+function promotionText(promotion: NonNullable<ProductSummary["verified_promotion"]>): string {
+  return promotion.discount_type === "percent"
+    ? `${Number.isInteger(promotion.discount_value) ? promotion.discount_value.toFixed(0) : promotion.discount_value.toFixed(1)}% off`
+    : `${formatCurrency(promotion.discount_value)} off`;
+}
+
+function formatDate(value: string): string {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
 function verifiedFeatureLabels(product: ProductSummary): string[] {

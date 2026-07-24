@@ -21,7 +21,10 @@ from scout.api.routes.chat import router as chat_router
 from scout.api.routes.chat_stream import router as chat_stream_router
 from scout.api.routes.checkout import router as checkout_router
 from scout.api.routes.health import router as health_router
+from scout.api.routes.memory import router as memory_router
 from scout.api.routes.orders import router as orders_router
+from scout.api.routes.protected_actions import router as protected_actions_router
+from scout.api.routes.saved_products import router as saved_products_router
 from scout.api.routes.stores import router as stores_router
 from scout.config import get_settings
 from scout.logging_config import configure_logging
@@ -92,7 +95,10 @@ def create_app() -> FastAPI:
     app.include_router(catalog_router)
     app.include_router(checkout_router)
     app.include_router(affiliate_router)
+    app.include_router(memory_router)
     app.include_router(orders_router)
+    app.include_router(protected_actions_router)
+    app.include_router(saved_products_router)
     app.include_router(stores_router)
 
     return app

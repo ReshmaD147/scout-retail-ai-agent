@@ -31,6 +31,14 @@ class OrderRepository:
             ).fetchone()
         return OrderRecord.from_row(row) if row is not None else None
 
+    def update_status_for_session(self, order_id: str, session_id: str, status: str) -> bool:
+        with connection_scope(self._db_path) as connection:
+            updated = connection.execute(
+                "UPDATE orders SET status = ? WHERE order_id = ? AND session_id = ?",
+                (status, order_id, session_id),
+            )
+        return updated.rowcount == 1
+
     def get_latest_for_session(self, session_id: str) -> Optional[OrderRecord]:
         with connection_scope(self._db_path) as connection:
             row = connection.execute(

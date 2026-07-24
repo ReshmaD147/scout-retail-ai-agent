@@ -42,6 +42,13 @@ def test_search_by_keyword_matches_description(seeded_db_path):
     assert any(p.product_id == "FTW-004" for p in results)
 
 
+def test_search_by_keyword_matches_subcategory_and_attributes(seeded_db_path):
+    repo = ProductRepository(seeded_db_path)
+    results = repo.search(keyword="work", category="Footwear", max_price=100)
+    ids = {product.product_id for product in results}
+    assert {"FTW-004", "FTW-008"} <= ids
+
+
 def test_search_by_max_price_enforces_budget(seeded_db_path):
     repo = ProductRepository(seeded_db_path)
     results = repo.search(category="Footwear", max_price=100)

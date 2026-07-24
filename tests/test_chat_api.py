@@ -50,8 +50,12 @@ import uuid
 import pytest
 
 from scout.api.dependencies import get_compiled_graph
+from scout.api.routes.chat import build_chat_response, build_initial_state
+from scout.api.schemas.chat import ChatRequest
 from scout.config import get_settings
 from scout.database.connection import connection_scope
+from scout.orchestration.state import RetailGraphState
+from scout.repositories.recommendation_reference_repository import RecommendationReferenceRepository
 
 ACCEPTANCE_QUERY = "Find comfortable work shoes under $100 that I can pick up today near Maple Grove."
 
@@ -132,8 +136,61 @@ def test_verified_products_are_returned(client):
     response = client.post("/chat", json={"session_id": "s-products", "message": ACCEPTANCE_QUERY})
     body = response.json()
     assert body["status"] == "completed"
-    assert [p["product_id"] for p in body["products"]] == ["FTW-004"]
+    assert [p["product_id"] for p in body["products"]] == ["FTW-004", "FTW-008"]
     assert body["products"][0]["name"] == "ComfortPro Shift Support"
+
+
+def test_verified_active_promotion_is_returned_for_product_card(client):
+    response = client.post("/chat", json={"session_id": "s-promotions", "message": ACCEPTANCE_QUERY})
+    body = response.json()
+
+    promotion = body["products"][0]["verified_promotion"]
+
+    assert promotion["promotion_id"] == "PRM-002"
+    assert promotion["label"] == "Workwear Comfort Event"
+    assert promotion["discount_type"] == "percent"
+    assert promotion["discount_value"] == 10.0
+    assert promotion["original_price"] == 89.99
+    assert promotion["promotional_price"] == 80.99
+    assert promotion["savings"] == 9.0
+    assert promotion["valid_until"] == "2026-07-31"
+    assert promotion["verified"] is True
+    assert any(
+        claim.get("type") == "active_promotion"
+        and claim.get("product_id") == "FTW-004"
+        and claim.get("promotion_id") == "PRM-002"
+        for claim in body["approved_claims"]
+    )
+    assert body["request_id"] == body["workflow_id"]
+    assert body["assistant_message_id"] == f"assistant-{body['workflow_id']}"
+    assert body["message_type"] == "recommendation"
+    assert body["product_ids"] == ["FTW-004", "FTW-008"]
+    action_ids = {action["action_id"] for action in body["suggested_actions"]}
+    assert "show-cheaper" in action_ids
+    assert "find-similar" in action_ids
+    assert "check-pickup" in action_ids
+    assert "compare-products" in action_ids
+    assert "show-promos" not in action_ids
+
+
+def test_multi_item_request_returns_grouped_results_and_missing_targets(client):
+    response = client.post(
+        "/chat",
+        json={"session_id": "s-multi-products", "message": "Work shoes under $100 and work bag"},
+    )
+    body = response.json()
+    assert response.status_code == 200
+    assert body["status"] in {"completed", "no_results"}
+    labels = {group["target_label"] for group in body["product_groups"]}
+    assert "work shoes" in labels
+    assert "work bag" in labels
+    shoe_group = next(group for group in body["product_groups"] if group["target_label"] == "work shoes")
+    assert shoe_group["products"]
+    assert shoe_group["products"][0]["category"] == "Footwear"
+    bag_group = next(group for group in body["product_groups"] if group["target_label"] == "work bag")
+    assert not bag_group["missing"]
+    assert bag_group["products"]
+    assert bag_group["products"][0]["category"] == "Bags"
 
 
 def test_strict_budget_remains_enforced(client):
@@ -155,6 +212,12 @@ def test_pickup_request_returns_grounded_fulfillment_info(client):
     assert "Plymouth" in nearby["store_name"]
     assert nearby["sellable_quantity"] > 0
     assert nearby["distance_miles"] is not None
+    assert any(
+        item["verified"] is True
+        and item["availability_type"] in {"nearby_store", "network"}
+        and item["product_id"] == "FTW-004"
+        for item in body["fulfillment_evidence"]
+    )
 
 
 
@@ -174,12 +237,15 @@ def test_internal_inventory_exhaustion_returns_external_offers(client):
     assert response.status_code == 200
     assert body["status"] == "completed"
     assert body["products"] == []
-    assert len(body["fulfillment_options"]) == 1
-    assert body["fulfillment_options"][0]["channel"] == "selected_store"
-    assert body["fulfillment_options"][0]["sellable_quantity"] == 0
+    assert len(body["fulfillment_options"]) == 2
+    assert {option["channel"] for option in body["fulfillment_options"]} == {"selected_store"}
+    assert all(option["sellable_quantity"] == 0 for option in body["fulfillment_options"])
     assert body["external_offers"]
     assert all(offer["match_type"] == "similar" for offer in body["external_offers"])
     assert all("merchant_url" not in offer for offer in body["external_offers"])
+    assert all(offer["same_product_verified"] is False for offer in body["external_offers"])
+    assert all(offer["observed_at"] for offer in body["external_offers"])
+    assert all(offer["affiliate_disclosure"] for offer in body["external_offers"])
 
 # ---------------------------------------------------------------------------
 # 7-8: normal business outcomes that are not a completed recommendation
@@ -193,6 +259,70 @@ def test_vague_request_returns_clarification_required(client):
     assert body["status"] == "clarification_required"
     assert body["answer"]
     assert body["products"] == []
+    assert body["message_type"] == "clarification"
+    assert body["quick_replies"]
+    assert body["suggested_actions"] == []
+
+
+def test_short_shopping_followup_uses_backend_recommendation_context(seeded_db_path):
+    RecommendationReferenceRepository().save(
+        session_id="s-followup",
+        workflow_id="wf-previous",
+        products=[{"product_id": "FTW-004", "name": "ComfortPro Shift Support"}],
+    )
+
+    state = build_initial_state(
+        ChatRequest(session_id="s-followup", message="Show me cheaper options"),
+        workflow_id="wf-followup",
+    )
+
+    assert state["customer_query"] == (
+        "Find cheaper ComfortPro Shift Support work shoes alternatives. Follow-up request: Show me cheaper options"
+    )
+
+    budget_state = build_initial_state(
+        ChatRequest(session_id="s-followup", message="Under $50"),
+        workflow_id="wf-budget-followup",
+    )
+    assert budget_state["customer_query"] == (
+        "Find cheaper ComfortPro Shift Support work shoes alternatives. Follow-up request: Under $50"
+    )
+
+
+def test_pickup_followup_uses_backend_product_context(seeded_db_path):
+    RecommendationReferenceRepository().save(
+        session_id="s-pickup-followup",
+        workflow_id="wf-previous",
+        products=[{"product_id": "FTW-004", "name": "ComfortPro Shift Support"}],
+    )
+
+    state = build_initial_state(
+        ChatRequest(session_id="s-pickup-followup", message="Can I pick it up today?"),
+        workflow_id="wf-pickup-followup",
+    )
+
+    assert state["customer_query"] == (
+        "Check pickup availability today for ComfortPro Shift Support work shoes. "
+        "Follow-up request: Can I pick it up today?"
+    )
+
+
+def test_pickup_clarification_uses_location_quick_replies():
+    response = build_chat_response(
+        RetailGraphState(
+            workflow_id="wf-pickup-clarify",
+            session_id="s-pickup-clarify",
+            customer_query="Check pickup availability today for ComfortPro Shift Support work shoes.",
+            workflow_status="awaiting_clarification",
+            final_response="Which Scout store or city should I check for pickup?",
+            intent={"request_type": "recommendation", "pickup_requested": True},
+        ),
+        workflow_id="wf-pickup-clarify",
+    )
+
+    labels = [reply.label for reply in response.quick_replies]
+    assert labels == ["Maple Grove", "Brooklyn Park", "Delivery instead"]
+    assert "Under $100" not in labels
 
 
 def test_no_match_request_returns_no_results(client):

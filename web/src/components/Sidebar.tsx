@@ -2,6 +2,7 @@ import { CartIcon, CloseIcon, GridIcon, HeartIcon, HomeIcon, SearchIcon, Sparkle
 
 export interface SidebarProps {
   itemCount: number;
+  savedCount?: number;
   recentSearches: string[];
   isOpen: boolean;
   onClose: () => void;
@@ -15,6 +16,7 @@ export interface SidebarProps {
 
 export function Sidebar({
   itemCount,
+  savedCount = 0,
   recentSearches,
   isOpen,
   onClose,
@@ -55,10 +57,11 @@ export function Sidebar({
         </button>
         <button type="button" className="sidebar__nav-item" onClick={onSaved}>
           <HeartIcon /><span>Saved</span>
+          {savedCount > 0 && <span className="sidebar__badge" aria-label={`Saved products: ${savedCount}`}>{savedCount}</span>}
         </button>
         <button type="button" className="sidebar__nav-item" onClick={onCartClick}>
           <CartIcon /><span>Cart</span>
-          <span className="sidebar__badge" aria-label={`Cart quantity: ${itemCount}`}>{itemCount}</span>
+          {itemCount > 0 && <span className="sidebar__badge" aria-label={`Cart quantity: ${itemCount}`}>{itemCount}</span>}
         </button>
       </nav>
 

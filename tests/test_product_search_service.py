@@ -43,7 +43,7 @@ def test_literal_keyword_still_wins_over_semantic_when_provided():
     )
 
     assert outcome.retrieval_method == "literal_keyword"
-    assert [p.product_id for p in outcome.products] == ["FTW-004"]
+    assert [p.product_id for p in outcome.products] == ["FTW-004", "FTW-008"]
 
 
 def test_semantic_search_finds_the_comfort_work_shoe_by_meaning():
@@ -128,3 +128,17 @@ def test_deals_only_requires_a_current_promotion_and_exact_product_type():
     )
     assert [product.product_id for product in outcome.products] == ["HOM-001"]
     assert all(product.subcategory == "Coffee Makers" for product in outcome.products)
+
+
+def test_work_shoe_deals_include_all_active_relevant_work_promotions():
+    outcome = search_products_by_meaning(
+        "Work shoes under $100 with deals",
+        keyword="work",
+        category="Footwear",
+        max_price=100.0,
+        deals_only=True,
+        provider=_provider(),
+    )
+
+    assert outcome.retrieval_method == "literal_keyword"
+    assert [product.product_id for product in outcome.products] == ["FTW-004", "FTW-008"]

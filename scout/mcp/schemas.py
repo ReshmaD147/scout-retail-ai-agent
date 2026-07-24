@@ -41,6 +41,10 @@ class ProductSummary(BaseModel):
     review_count: int
     active: bool
     attributes: Dict[str, Any] = Field(default_factory=dict)
+    verified_promotion: Optional[Dict[str, Any]] = None
+    explanation: Optional[str] = None
+    explanation_source: Optional[Literal["ollama", "retry", "deterministic_fallback"]] = None
+    memory_influence: Optional[str] = None
 
 
 class ProductDetail(ProductSummary):
@@ -355,6 +359,10 @@ class ExternalOfferSummary(BaseModel):
     match_reason: str
     source_product_id: Optional[str] = None
     matched_identifier_type: Optional[str] = None
+    observed_at: Optional[str] = None
+    same_product_verified: bool = False
+    affiliate_disclosure: str
+    evidence_ids: List[str] = Field(default_factory=list)
     relevance_score: float
     disclosure: str
 

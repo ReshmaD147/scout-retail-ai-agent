@@ -32,6 +32,7 @@ file can assert about itself):
 """
 
 import sqlite3
+from datetime import date, timedelta
 
 import pytest
 
@@ -70,6 +71,21 @@ def _insert_expired_promotion(db_path: str, product_id: str, promotion_id: str) 
             VALUES (?, ?, 'Expired Test Promo', 50.0, NULL, '2020-01-01', '2020-01-31', 1)
             """,
             (promotion_id, product_id),
+        )
+
+
+def _insert_current_promotion(db_path: str, product_id: str, promotion_id: str, discount_percent: float) -> None:
+    today = date.today()
+    start_date = (today - timedelta(days=1)).isoformat()
+    end_date = (today + timedelta(days=7)).isoformat()
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO promotions (promotion_id, product_id, label, discount_percent, discount_amount,
+                                     start_date, end_date, active)
+            VALUES (?, ?, 'Current Test Promo', ?, NULL, ?, ?, 1)
+            """,
+            (promotion_id, product_id, discount_percent, start_date, end_date),
         )
 
 
@@ -168,6 +184,16 @@ def test_subtotal_is_calculated_correctly(seeded_db_path):
     expected = round(sum(item.line_total for item in cart.items), 2)
     assert cart.subtotal == expected
     assert cart.subtotal == round(cart.items[0].line_total + cart.items[1].line_total, 2)
+
+
+def test_cart_recalculates_active_promotion_from_backend(seeded_db_path):
+    _insert_current_promotion(seeded_db_path, FOOTWEAR_PRODUCT, "PRM-CART-CURRENT", 50.0)
+
+    cart = cart_service.add_item("session-1", FOOTWEAR_PRODUCT, 1, db_path=seeded_db_path)
+
+    assert cart.items[0].promotion_id == "PRM-CART-CURRENT"
+    assert cart.items[0].promotion_label == "Current Test Promo"
+    assert cart.items[0].unit_price == round(89.99 * 0.5, 2)
 
 
 # --- 12-13: revalidation -----------------------------------------------------------

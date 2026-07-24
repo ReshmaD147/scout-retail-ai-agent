@@ -5,19 +5,26 @@ import type { ActivityEvent } from "../types/chat";
 import { AgentActivity } from "./AgentActivity";
 
 const activities: ActivityEvent[] = [
-  { id: 1, stageId: "understand", type: "workflow_started", label: "Understanding your request", status: "completed" },
-  { id: 2, stageId: "plan", type: "plan_created", label: "Creating a shopping plan", status: "completed" },
-  { id: 3, stageId: "catalog", type: "tool_started", label: "Searching the product catalog", status: "active" },
+  { id: 1, type: "workflow_started", label: "Understanding request", status: "completed" },
+  { id: 2, type: "tool_started", label: "Recommendation Agent searching products", status: "completed" },
+  { id: 3, type: "plan_created", label: "Creating a shopping plan", status: "completed" },
+  { id: 4, type: "tool_started", label: "Preparing response", status: "active" },
 ];
 
 describe("AgentActivity", () => {
-  it("renders the compact seven-step workflow timeline", () => {
+  it("renders streamed workflow events without fixed placeholder steps", () => {
     render(<AgentActivity activities={activities} />);
     expect(screen.getByText("Understanding request")).toBeInTheDocument();
-    expect(screen.getByText("Creating shopping plan")).toBeInTheDocument();
-    expect(screen.getByText("Searching catalog")).toBeInTheDocument();
+    expect(screen.getByText("Creating a shopping plan")).toBeInTheDocument();
+    expect(screen.getByText("Recommendation Agent searching products")).toBeInTheDocument();
     expect(screen.getByText("Preparing response")).toBeInTheDocument();
-    expect(screen.queryByText("Searching the product catalog")).not.toBeInTheDocument();
+    const labels = screen.getAllByText(/Understanding request|Creating a shopping plan|Recommendation Agent searching products|Preparing response/);
+    expect(labels.map((label) => label.textContent)).toEqual([
+      "Understanding request",
+      "Creating a shopping plan",
+      "Recommendation Agent searching products",
+      "Preparing response",
+    ]);
   });
 
   it("starts collapsed after completion and can be expanded", async () => {
@@ -26,6 +33,6 @@ describe("AgentActivity", () => {
     expect(screen.getByRole("button", { name: "Show progress" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Show progress" }));
     expect(screen.getByRole("button", { name: "Hide progress" })).toBeInTheDocument();
-    expect(screen.getByText("Searching catalog")).toBeInTheDocument();
+    expect(screen.getByText("Recommendation Agent searching products")).toBeInTheDocument();
   });
 });

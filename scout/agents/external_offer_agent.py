@@ -13,6 +13,7 @@ from scout.config import get_settings
 from scout.mcp.affiliate_tools import search_external_offers
 from scout.orchestration.limits import check_step_budget
 from scout.orchestration.state import EvidenceEntry, RetailGraphState, ToolCallTrace, WorkflowError
+from scout.orchestration.tool_registry import validate_tool_call
 
 
 def external_offer_fallback_node(state: RetailGraphState) -> Dict[str, Any]:
@@ -21,11 +22,22 @@ def external_offer_fallback_node(state: RetailGraphState) -> Dict[str, Any]:
         return limit_update
 
     intent = state.intent or {}
+    arguments = {
+        "query_text": state.customer_query,
+        "category": intent.get("category"),
+        "max_price": intent.get("max_price"),
+        "limit": get_settings().max_external_offers,
+    }
+    validation = validate_tool_call("external_offer", "search_external_offers", arguments, state)
+    if not validation.allowed and validation.rejection is not None:
+        return {
+            "step_count": state.step_count + 1,
+            "errors": [validation.rejection.to_workflow_error()],
+            "tool_results": [validation.rejection.to_tool_trace()],
+        }
+
     result = search_external_offers(
-        query_text=state.customer_query,
-        category=intent.get("category"),
-        max_price=intent.get("max_price"),
-        limit=get_settings().max_external_offers,
+        **arguments,
     )
 
     update: Dict[str, Any] = {"step_count": state.step_count + 1}

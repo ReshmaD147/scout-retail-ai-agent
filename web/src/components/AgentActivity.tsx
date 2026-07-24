@@ -8,10 +8,34 @@ export interface AgentActivityProps {
   showWhenEmpty?: boolean;
 }
 
+const DISPLAY_ORDER = new Map<string, number>([
+  ["Understanding request", 0],
+  ["Creating a shopping plan", 1],
+  ["Recommendation Agent searching products", 2],
+  ["Inventory Agent checking selected store", 3],
+  ["Inventory Agent checking nearby stores", 4],
+  ["Finding available substitutes", 5],
+  ["External Offer Agent searching alternatives", 6],
+  ["Order Agent retrieving order evidence", 7],
+  ["Verifying claims", 8],
+  ["Preparing response", 9],
+  ["Completed", 10],
+  ["Stopped safely", 10],
+]);
+
+function sortActivitiesForDisplay(activities: ActivityEvent[]): ActivityEvent[] {
+  return [...activities].sort((left, right) => {
+    const leftOrder = DISPLAY_ORDER.get(left.label) ?? 99;
+    const rightOrder = DISPLAY_ORDER.get(right.label) ?? 99;
+    if (leftOrder !== rightOrder) return leftOrder - rightOrder;
+    return left.id - right.id;
+  });
+}
+
 export function AgentActivity({ activities, isComplete = false, showWhenEmpty = false }: AgentActivityProps): JSX.Element | null {
   const [collapsed, setCollapsed] = useState(isComplete);
   if (activities.length === 0 && !showWhenEmpty) return null;
-  const visibleActivities: ActivityEvent[] = activities.length > 0 ? activities : [{
+  const visibleActivities: ActivityEvent[] = activities.length > 0 ? sortActivitiesForDisplay(activities) : [{
     id: 0,
     type: "workflow_started",
     label: "Understanding request",

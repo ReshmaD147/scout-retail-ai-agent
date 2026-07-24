@@ -66,6 +66,7 @@ from scout.mcp.order_tools import lookup_order
 from scout.mcp.product_tools import get_product_details, get_promotions
 from scout.mcp.schemas import ExternalOfferSummary, ProductDetail, ProductSummary
 from scout.orchestration.limits import SAFE_FAILURE_MESSAGE, check_step_budget
+from scout.services.policy_retrieval_service import chunk_policy_documents, load_policy_documents
 from scout.orchestration.state import EvidenceEntry, RetailGraphState, ToolCallTrace, WorkflowError
 from scout.services import budget_service
 
@@ -123,6 +124,7 @@ class ProposedClaim(BaseModel):
         "payment_status",
         "tracking_status",
         "eligibility",
+        "policy_section",
     ]
     product_id: Optional[str] = None
     product_name: Optional[str] = None
@@ -149,6 +151,11 @@ class ProposedClaim(BaseModel):
     tracking_status: Optional[str] = None
     eligibility_type: Optional[Literal["cancellation", "return", "exchange"]] = None
     eligible: Optional[bool] = None
+    policy_id: Optional[str] = None
+    policy_file: Optional[str] = None
+    policy_category: Optional[str] = None
+    policy_version: Optional[str] = None
+    section_title: Optional[str] = None
     evidence_ids: List[str] = Field(default_factory=list)
 
 
@@ -350,6 +357,8 @@ def verify_proposed_claims(state: RetailGraphState) -> Tuple[ClaimVerificationRe
             issue = _verify_external_offer_claim(claim, report)
         elif claim.type in {"order_ownership", "order_status", "payment_status", "tracking_status", "eligibility"}:
             issue = _verify_order_claim(claim, report, state)
+        elif claim.type == "policy_section":
+            issue = _verify_policy_claim(claim, report, state)
         else:
             issue = _reject(report, claim, "unsupported structured claim type")
         if issue is not None:
@@ -357,6 +366,49 @@ def verify_proposed_claims(state: RetailGraphState) -> Tuple[ClaimVerificationRe
 
     report.verified = bool(report.approved_claims) and not report.rejected_claims and not report.missing_evidence
     return report, issues
+
+
+def _verify_policy_claim(claim: ProposedClaim, report: ClaimVerificationReport, state: RetailGraphState) -> Optional[WorkflowError]:
+    if not claim.policy_id or not claim.policy_file or not claim.policy_category or not claim.policy_version or not claim.section_title:
+        return _reject(report, claim, "policy claim is missing required source metadata")
+    if not claim.evidence_ids:
+        _missing(report, claim, "policy claim has no evidence id")
+        return _claim_issue(claim, "policy claim has no evidence id")
+
+    evidence_by_id = {row.get("evidence_id"): row for row in state.policy_results if isinstance(row, dict)}
+    evidence_rows = [evidence_by_id.get(evidence_id) for evidence_id in claim.evidence_ids]
+    if any(row is None for row in evidence_rows):
+        _missing(report, claim, "policy evidence id was not found in policy_results")
+        return _claim_issue(claim, "policy evidence id was not found in policy_results")
+
+    chunks = chunk_policy_documents(load_policy_documents())
+    matching = next(
+        (
+            chunk
+            for chunk in chunks
+            if chunk.policy_id == claim.policy_id
+            and chunk.policy_file == claim.policy_file
+            and chunk.category == claim.policy_category
+            and chunk.version == claim.policy_version
+            and chunk.section_title == claim.section_title
+            and chunk.status == "active"
+        ),
+        None,
+    )
+    if matching is None:
+        return _reject(report, claim, "active policy section could not be reverified")
+
+    for row in evidence_rows:
+        assert row is not None
+        if row.get("policy_id") != matching.policy_id or row.get("policy_file") != matching.policy_file:
+            return _reject(report, claim, "policy evidence does not match the claimed policy source")
+        if row.get("policy_version") != matching.version or row.get("section_title") != matching.section_title:
+            return _reject(report, claim, "policy evidence does not match the claimed section metadata")
+        if row.get("text") != matching.text:
+            return _reject(report, claim, "policy evidence text no longer matches the active policy section")
+
+    _approve(report, claim)
+    return None
 
 
 def _structured_claims_from_verified(
@@ -408,6 +460,17 @@ def _structured_claims_from_verified(
                         "promotion_id": entry.data.get("promotion_id"),
                     }
                 )
+        fresh_promotions = get_promotions(product_id=candidate.product_id)
+        if fresh_promotions.error is None:
+            for promotion in fresh_promotions.promotions:
+                if promotion.is_currently_valid:
+                    claims.append(
+                        {
+                            "type": "active_promotion",
+                            "product_id": candidate.product_id,
+                            "promotion_id": promotion.promotion_id,
+                        }
+                    )
     return claims
 
 
@@ -625,55 +688,106 @@ def _verify_promotion_claims(product_id: str, evidence: List[EvidenceEntry]) -> 
     return issues
 
 
-def _promotion_label(product_id: str, evidence: List[EvidenceEntry]) -> Optional[str]:
-    for entry in evidence:
-        if entry.source == "get_promotions" and entry.data.get("product_id") == product_id:
-            label = entry.data.get("label")
-            if label:
-                return str(label)
+def _approved_promotion_claim(product_id: str, approved_claims: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    for claim in approved_claims:
+        if (
+            claim.get("type") == "active_promotion"
+            and claim.get("product_id") == product_id
+            and claim.get("promotion_id")
+        ):
+            return claim
     return None
+
+
+def _promotion_display(candidate: ProductSummary, approved_claims: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    claim = _approved_promotion_claim(candidate.product_id, approved_claims)
+    if claim is None:
+        return None
+    fresh = get_promotions(product_id=candidate.product_id)
+    if fresh.error is not None:
+        return None
+    promotion = next(
+        (
+            item
+            for item in fresh.promotions
+            if item.promotion_id == claim.get("promotion_id") and item.is_currently_valid
+        ),
+        None,
+    )
+    if promotion is None:
+        return None
+    if promotion.discount_percent is not None:
+        promotional_price = round(candidate.price * (1 - promotion.discount_percent / 100), 2)
+        discount_text = f"{promotion.discount_percent:g}% off"
+    elif promotion.discount_amount is not None:
+        promotional_price = round(max(candidate.price - promotion.discount_amount, 0), 2)
+        discount_text = f"${promotion.discount_amount:.2f} off"
+    else:
+        return None
+    savings = round(candidate.price - promotional_price, 2)
+    if savings <= 0:
+        return None
+    return {
+        "label": promotion.label,
+        "original_price": round(candidate.price, 2),
+        "promotional_price": promotional_price,
+        "savings": savings,
+        "discount_text": discount_text,
+        "valid_until": promotion.end_date,
+    }
+
+
+def _price_phrase(candidate: ProductSummary, approved_claims: List[Dict[str, Any]]) -> str:
+    promotion = _promotion_display(candidate, approved_claims)
+    if promotion is None:
+        return f"${candidate.price:.2f}"
+    return (
+        f"${promotion['promotional_price']:.2f} after verified promotion "
+        f"{promotion['label']} ({promotion['discount_text']}; was "
+        f"${promotion['original_price']:.2f}; save ${promotion['savings']:.2f}; "
+        f"valid through {promotion['valid_until']})"
+    )
 
 
 def _build_final_response(
     verified: List[Tuple[ProductSummary, Dict[str, Any]]],
     evidence: List[EvidenceEntry],
+    approved_claims: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
+    del evidence  # final prose uses approved structured facts, not raw promotion payloads.
+    resolved_claims = approved_claims or []
     lines = []
     for candidate, detail in verified:
         store_name = detail.get("store_name", "a nearby Scout store")
         quantity = detail.get("sellable_quantity")
         channel = detail.get("channel")
-        promotion_label = _promotion_label(candidate.product_id, evidence)
-        promotion_sentence = (
-            f" A verified active promotion, {promotion_label}, is available."
-            if promotion_label
-            else ""
-        )
+        price_phrase = _price_phrase(candidate, resolved_claims)
         if channel == "substitute":
             reference = detail.get("substitute_for")
             lines.append(
-                f"{candidate.name} (${candidate.price:.2f}) is offered as a substitute for {reference}, "
+                f"{candidate.name} ({price_phrase}) is offered as a substitute for {reference}, "
                 f"with {quantity} unit(s) available for pickup today at {store_name}."
-                f"{promotion_sentence}"
             )
         elif channel == "delivery":
             minimum_days = detail.get("delivery_min_days")
             maximum_days = detail.get("delivery_max_days")
             lines.append(
-                f"{candidate.name} (${candidate.price:.2f}) has {quantity} unit(s) available across "
+                f"{candidate.name} ({price_phrase}) has {quantity} unit(s) available across "
                 f"the Scout store network. Standard prototype delivery is estimated at "
-                f"{minimum_days}-{maximum_days} days.{promotion_sentence}"
+                f"{minimum_days}-{maximum_days} days."
             )
         else:
             lines.append(
-                f"{candidate.name} (${candidate.price:.2f}) has {quantity} unit(s) available for pickup "
-                f"today at {store_name}.{promotion_sentence}"
+                f"{candidate.name} ({price_phrase}) has {quantity} unit(s) available for pickup "
+                f"today at {store_name}."
             )
     return " ".join(lines)
 
 
 def _final_response_unsupported_claim(
-    final_response: str, verified_candidates: List[ProductSummary]
+    final_response: str,
+    verified_candidates: List[ProductSummary],
+    approved_claims: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[WorkflowError]:
     """Check 8: every dollar figure and product name in the composed text is verified.
 
@@ -683,6 +797,17 @@ def _final_response_unsupported_claim(
     guarantee.
     """
     verified_prices = {f"{candidate.price:.2f}" for candidate in verified_candidates}
+    for candidate in verified_candidates:
+        promotion = _promotion_display(candidate, approved_claims or [])
+        if promotion is None:
+            continue
+        verified_prices.update(
+            {
+                f"{promotion['original_price']:.2f}",
+                f"{promotion['promotional_price']:.2f}",
+                f"{promotion['savings']:.2f}",
+            }
+        )
     for amount in _MONEY_PATTERN.findall(final_response):
         if amount not in verified_prices:
             return WorkflowError(
@@ -1025,8 +1150,12 @@ def response_verification_node(state: RetailGraphState) -> Dict[str, Any]:
         update["verification_result"] = report.model_dump(mode="json")
         return update
 
-    final_response = _build_final_response(verified, state.evidence)
-    unsupported = _final_response_unsupported_claim(final_response, [candidate for candidate, _ in verified])
+    final_response = _build_final_response(verified, state.evidence, report.approved_claims)
+    unsupported = _final_response_unsupported_claim(
+        final_response,
+        [candidate for candidate, _ in verified],
+        report.approved_claims,
+    )
     if unsupported is not None:
         issues.append(unsupported)
         report.rejected_claims.append({"type": "final_response", "reason": unsupported.message})

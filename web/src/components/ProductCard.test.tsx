@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { PRODUCT_IMAGE_PLACEHOLDER, ProductCard } from "./ProductCard";
 import type { FulfillmentOption, ProductSummary } from "../types/chat";
 
@@ -39,6 +39,72 @@ describe("ProductCard", () => {
   it("formats the price correctly (scenario 8)", () => {
     render(<ProductCard product={product} fulfillmentOptions={fulfillmentOptions} />);
     expect(screen.getByText("$89.99")).toBeInTheDocument();
+    expect(screen.queryByText("Verified promotion")).not.toBeInTheDocument();
+  });
+
+  it("renders verified promotions with accessible original and promotional prices", () => {
+    render(
+      <ProductCard
+        product={{
+          ...product,
+          verified_promotion: {
+            promotion_id: "PRM-002",
+            label: "Workwear Comfort Event",
+            discount_type: "percent",
+            discount_value: 10,
+            original_price: 89.99,
+            promotional_price: 80.99,
+            savings: 9,
+            valid_until: "2026-07-31",
+            terms_summary: null,
+            verified: true,
+          },
+        }}
+        fulfillmentOptions={fulfillmentOptions}
+      />
+    );
+
+    expect(screen.getByText("Verified promotion")).toBeInTheDocument();
+    expect(screen.getByText("Workwear Comfort Event")).toBeInTheDocument();
+    expect(screen.getByText("10% off · Save $9.00")).toBeInTheDocument();
+    expect(screen.getByText("$80.99")).toBeInTheDocument();
+    expect(screen.getByText("$89.99")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Current price $80.99, original price $89.99")
+    ).toBeInTheDocument();
+    expect(screen.getByText(/valid through/i)).toHaveTextContent("Valid through Jul 31, 2026");
+    expect(screen.queryByText(/while the verified promotion is active/i)).not.toBeInTheDocument();
+  });
+
+  it("renders the grounded explanation for the correct product", () => {
+    render(
+      <ProductCard
+        product={{
+          ...product,
+          explanation: "ComfortPro Shift Support matches your request with high cushioning and a verified active promotion.",
+          explanation_source: "deterministic_fallback",
+        }}
+        fulfillmentOptions={fulfillmentOptions}
+      />
+    );
+
+    expect(screen.getByLabelText("Why Scout selected ComfortPro Shift Support")).toHaveTextContent(
+      "ComfortPro Shift Support matches your request"
+    );
+  });
+
+  it("shows memory influence only when the backend says memory affected ranking", () => {
+    const { rerender } = render(<ProductCard product={product} fulfillmentOptions={fulfillmentOptions} />);
+    expect(screen.queryByText(/matches a saved preference/i)).not.toBeInTheDocument();
+
+    rerender(
+      <ProductCard
+        product={{ ...product, memory_influence: "Ranked slightly higher because it matches your saved wide-fit preference." }}
+        fulfillmentOptions={fulfillmentOptions}
+      />
+    );
+
+    expect(screen.getByText("Ranked slightly higher because it matches your saved wide-fit preference.")).toBeInTheDocument();
   });
 
   it("omits rating when the backend did not provide one, instead of guessing", () => {
@@ -103,5 +169,14 @@ describe("ProductCard", () => {
   it("shows an honest message when no fulfillment data exists, instead of guessing", () => {
     render(<ProductCard product={product} fulfillmentOptions={[]} />);
     expect(screen.getByText("Pickup time unavailable")).toBeInTheDocument();
+  });
+
+  it("toggles saved state with accessible pressed labels", () => {
+    const onToggleSaved = vi.fn();
+    render(<ProductCard product={product} fulfillmentOptions={[]} isSaved onToggleSaved={onToggleSaved} />);
+    const button = screen.getByRole("button", { name: "Remove ComfortPro Shift Support from saved" });
+    expect(button).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(button);
+    expect(onToggleSaved).toHaveBeenCalledWith("FTW-004");
   });
 });

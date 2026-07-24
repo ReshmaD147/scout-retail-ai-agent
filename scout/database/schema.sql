@@ -132,6 +132,29 @@ CREATE TABLE IF NOT EXISTS cart_items (
 
 CREATE INDEX IF NOT EXISTS idx_cart_items_cart ON cart_items (cart_id);
 
+-- Saved products are deterministic customer preference records. They
+-- store only ownership + product_id, never a copied product snapshot;
+-- current product details are always re-read from products.
+CREATE TABLE IF NOT EXISTS saved_products (
+    saved_id    TEXT PRIMARY KEY,
+    session_id  TEXT,
+    customer_id TEXT,
+    product_id  TEXT NOT NULL REFERENCES products (product_id),
+    created_at  TEXT NOT NULL,
+    CHECK (session_id IS NOT NULL OR customer_id IS NOT NULL)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_products_session_product
+    ON saved_products (session_id, product_id)
+    WHERE session_id IS NOT NULL AND customer_id IS NULL;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_saved_products_customer_product
+    ON saved_products (customer_id, product_id)
+    WHERE customer_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_saved_products_session ON saved_products (session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_saved_products_customer ON saved_products (customer_id, created_at);
+
 -- Step 15 also needs to resolve phrases like "the first product" in a
 -- cart command to a real product_id. That reference must be grounded
 -- in a *verified* recommendation result, not guessed - so /chat and
@@ -247,7 +270,7 @@ CREATE TABLE IF NOT EXISTS orders (
     session_id             TEXT NOT NULL,
     cart_id                TEXT NOT NULL REFERENCES carts (cart_id),
     payment_id             TEXT NOT NULL UNIQUE REFERENCES payments (payment_id),
-    status                 TEXT NOT NULL CHECK (status IN ('confirmed')),
+    status                 TEXT NOT NULL CHECK (status IN ('confirmed', 'canceled')),
     fulfillment_type       TEXT NOT NULL CHECK (fulfillment_type IN ('pickup', 'delivery')),
     store_id               TEXT REFERENCES stores (store_id),
     shipping_address_json  TEXT,
@@ -385,3 +408,198 @@ CREATE TABLE IF NOT EXISTS order_fulfillments (
 
 CREATE INDEX IF NOT EXISTS idx_order_fulfillments_tracking
     ON order_fulfillments (tracking_number);
+
+-- Step 6 support escalation, conversation logging, and verification audit.
+CREATE TABLE IF NOT EXISTS support_cases (
+    case_id              TEXT PRIMARY KEY,
+    case_reference       TEXT NOT NULL UNIQUE,
+    session_id           TEXT NOT NULL,
+    workflow_id          TEXT,
+    order_id             TEXT,
+    category             TEXT NOT NULL,
+    sentiment            TEXT NOT NULL CHECK (sentiment IN ('positive', 'neutral', 'negative')),
+    risk_level           TEXT NOT NULL CHECK (risk_level IN ('low', 'medium', 'high')),
+    status               TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'closed')),
+    summary              TEXT NOT NULL,
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_support_cases_session ON support_cases (session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_support_cases_order ON support_cases (order_id, created_at);
+
+CREATE TABLE IF NOT EXISTS conversation_logs (
+    log_id               TEXT PRIMARY KEY,
+    workflow_id          TEXT NOT NULL,
+    session_id           TEXT NOT NULL,
+    user_message         TEXT NOT NULL,
+    assistant_response   TEXT,
+    status               TEXT NOT NULL,
+    message_type         TEXT,
+    case_reference       TEXT,
+    sentiment            TEXT NOT NULL CHECK (sentiment IN ('positive', 'neutral', 'negative')),
+    risk_level           TEXT NOT NULL CHECK (risk_level IN ('low', 'medium', 'high')),
+    created_at           TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_conversation_logs_session ON conversation_logs (session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_conversation_logs_workflow ON conversation_logs (workflow_id);
+
+CREATE TABLE IF NOT EXISTS support_audit_records (
+    audit_id             TEXT PRIMARY KEY,
+    workflow_id          TEXT NOT NULL,
+    session_id           TEXT NOT NULL,
+    case_reference       TEXT,
+    evidence_json        TEXT NOT NULL,
+    verification_json    TEXT NOT NULL,
+    created_at           TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_support_audit_workflow ON support_audit_records (workflow_id);
+CREATE INDEX IF NOT EXISTS idx_support_audit_session ON support_audit_records (session_id, created_at);
+
+-- Step 17 protected-action confirmation ledger.
+--
+-- These tables store proposals and deterministic execution results for
+-- sensitive actions that must never be executed by autonomous agents. A row in
+-- protected_action_confirmations is only a proposal until its status reaches a
+-- terminal execution state; request rows record reviewable non-payment support
+-- requests and are not proof that a refund/return/exchange was approved.
+CREATE TABLE IF NOT EXISTS protected_action_confirmations (
+    confirmation_id       TEXT PRIMARY KEY,
+    workflow_id           TEXT NOT NULL,
+    request_id            TEXT NOT NULL,
+    session_id            TEXT NOT NULL,
+    customer_id           TEXT NOT NULL,
+    action_type           TEXT NOT NULL CHECK (action_type IN (
+        'cancel_order',
+        'create_return_request',
+        'create_exchange_request',
+        'change_order_address',
+        'create_refund_request',
+        'start_protected_payment_handoff'
+    )),
+    resource_type         TEXT NOT NULL,
+    resource_id           TEXT NOT NULL,
+    proposal_summary      TEXT NOT NULL,
+    customer_effects_json TEXT NOT NULL,
+    financial_effects_json TEXT NOT NULL,
+    eligibility_status    TEXT NOT NULL,
+    eligibility_reason_code TEXT NOT NULL,
+    policy_ids_json       TEXT NOT NULL,
+    evidence_ids_json     TEXT NOT NULL,
+    payload_hash          TEXT NOT NULL,
+    idempotency_key       TEXT NOT NULL UNIQUE,
+    status                TEXT NOT NULL CHECK (status IN (
+        'requested',
+        'proposed',
+        'awaiting_confirmation',
+        'approved',
+        'rejected',
+        'executing',
+        'executed',
+        'verified',
+        'failed',
+        'expired'
+    )),
+    result_json           TEXT,
+    created_at            TEXT NOT NULL,
+    expires_at            TEXT NOT NULL,
+    consumed_at           TEXT,
+    updated_at            TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_protected_actions_session
+    ON protected_action_confirmations (session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_protected_actions_workflow
+    ON protected_action_confirmations (workflow_id);
+
+CREATE TABLE IF NOT EXISTS protected_action_requests (
+    request_id       TEXT PRIMARY KEY,
+    confirmation_id  TEXT NOT NULL REFERENCES protected_action_confirmations (confirmation_id),
+    action_type      TEXT NOT NULL,
+    order_id         TEXT NOT NULL,
+    order_item_id    TEXT,
+    status           TEXT NOT NULL,
+    reason           TEXT,
+    payload_json     TEXT NOT NULL,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_protected_action_requests_order
+    ON protected_action_requests (order_id, created_at);
+
+CREATE TABLE IF NOT EXISTS protected_action_audit_events (
+    event_id         TEXT PRIMARY KEY,
+    confirmation_id  TEXT,
+    workflow_id      TEXT,
+    session_id       TEXT NOT NULL,
+    customer_id      TEXT,
+    event_type       TEXT NOT NULL,
+    detail_json      TEXT NOT NULL,
+    created_at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_protected_action_audit_confirmation
+    ON protected_action_audit_events (confirmation_id, created_at);
+
+-- Step 18 memory boundaries.
+CREATE TABLE IF NOT EXISTS workflow_memory (
+    workflow_id         TEXT PRIMARY KEY,
+    session_id          TEXT NOT NULL,
+    customer_id         TEXT,
+    current_query       TEXT NOT NULL,
+    structured_intent_json TEXT,
+    current_plan_json   TEXT NOT NULL,
+    completed_steps_json TEXT NOT NULL,
+    remaining_steps_json TEXT NOT NULL,
+    tool_result_refs_json TEXT NOT NULL,
+    evidence_ids_json   TEXT NOT NULL,
+    selected_products_json TEXT NOT NULL,
+    errors_json         TEXT NOT NULL,
+    retry_state_json    TEXT NOT NULL,
+    verification_status TEXT,
+    status              TEXT NOT NULL CHECK (status IN ('active', 'completed', 'expired')),
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL,
+    expires_at          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_memory_session ON workflow_memory (session_id, updated_at);
+
+CREATE TABLE IF NOT EXISTS session_memory (
+    session_id              TEXT PRIMARY KEY,
+    customer_id             TEXT,
+    viewed_products_json    TEXT NOT NULL,
+    rejected_products_json  TEXT NOT NULL,
+    recommended_products_json TEXT NOT NULL,
+    current_budget          REAL,
+    selected_store_id       TEXT,
+    fulfillment_preference  TEXT,
+    comparison_set_json     TEXT NOT NULL,
+    current_policy_topic    TEXT,
+    authorized_order_ref    TEXT,
+    memory_disabled         INTEGER NOT NULL DEFAULT 0 CHECK (memory_disabled IN (0, 1)),
+    created_at              TEXT NOT NULL,
+    updated_at              TEXT NOT NULL,
+    expires_at              TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_session_memory_customer ON session_memory (customer_id, updated_at);
+
+CREATE TABLE IF NOT EXISTS durable_preferences (
+    preference_id      TEXT PRIMARY KEY,
+    customer_id        TEXT NOT NULL,
+    type               TEXT NOT NULL,
+    value              TEXT NOT NULL,
+    confidence         REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+    source             TEXT NOT NULL CHECK (source IN ('explicit', 'customer_confirmed', 'inferred')),
+    status             TEXT NOT NULL CHECK (status IN ('active', 'deleted', 'disabled')),
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT NOT NULL,
+    last_confirmed_at  TEXT,
+    expires_at         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_durable_preferences_customer ON durable_preferences (customer_id, status, updated_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_durable_preferences_unique_active
+    ON durable_preferences (customer_id, type, value)
+    WHERE status = 'active';
+
+CREATE TABLE IF NOT EXISTS memory_controls (
+    customer_id       TEXT PRIMARY KEY,
+    memory_enabled    INTEGER NOT NULL CHECK (memory_enabled IN (0, 1)),
+    updated_at        TEXT NOT NULL
+);

@@ -24,6 +24,7 @@ RequestType = Literal[
     "fulfillment",
     "order_status",
     "order_eligibility",
+    "policy",
     "clarification",
     "out_of_scope",
 ]
@@ -31,10 +32,11 @@ FulfillmentPreference = Literal["pickup", "delivery", "either"]
 Urgency = Literal["today", "this_week", "flexible"]
 
 _PRODUCT_ID_PATTERN = re.compile(r"\b[A-Z]{2,5}-\d{3,5}\b", re.IGNORECASE)
-_ORDER_ID_PATTERN = re.compile(
-    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b",
-    re.IGNORECASE,
+_UUID_ORDER_ID_PATTERN = (
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"
 )
+_HUMAN_ORDER_ID_PATTERN = r"ORD-\d{3,10}"
+_ORDER_ID_PATTERN = re.compile(rf"\b(?:{_UUID_ORDER_ID_PATTERN}|{_HUMAN_ORDER_ID_PATTERN})\b", re.IGNORECASE)
 
 
 class StructuredIntent(BaseModel):
@@ -43,6 +45,7 @@ class StructuredIntent(BaseModel):
     category: Optional[str] = None
     use_case: Optional[str] = None
     attributes: List[str] = Field(default_factory=list)
+    requested_products: List[Dict[str, Any]] = Field(default_factory=list)
     budget_min: Optional[float] = Field(default=None, ge=0)
     budget_max: Optional[float] = Field(default=None, ge=0)
     location: Optional[str] = None
@@ -69,7 +72,7 @@ class StructuredIntent(BaseModel):
         if value is None:
             return None
         stripped = value.strip()
-        return stripped.upper() if _PRODUCT_ID_PATTERN.fullmatch(stripped) else stripped.lower()
+        return stripped.upper() if _PRODUCT_ID_PATTERN.fullmatch(stripped) else normalize_order_id(stripped)
 
     @field_validator("comparison_product_ids")
     @classmethod
@@ -87,6 +90,15 @@ class IntentExtractionResult(BaseModel):
     extraction_source: Literal["llm", "retry", "deterministic_fallback"]
 
 
+def normalize_order_id(value: str) -> str:
+    stripped = value.strip()
+    if re.fullmatch(_UUID_ORDER_ID_PATTERN, stripped, re.IGNORECASE):
+        return stripped.lower()
+    if re.fullmatch(_HUMAN_ORDER_ID_PATTERN, stripped, re.IGNORECASE):
+        return stripped.upper()
+    return stripped
+
+
 def _schema_example() -> Dict[str, Any]:
     return {
         "request_type": "product_search",
@@ -94,6 +106,7 @@ def _schema_example() -> Dict[str, Any]:
         "category": None,
         "use_case": None,
         "attributes": [],
+        "requested_products": [],
         "budget_min": None,
         "budget_max": None,
         "location": None,
@@ -160,8 +173,8 @@ def _mentioned_product_id(value: Optional[str], query: str) -> Optional[str]:
 def _mentioned_order_id(value: Optional[str], query: str) -> Optional[str]:
     if not value:
         return None
-    normalized = value.strip().lower()
-    return normalized if normalized in query.lower() else None
+    normalized = normalize_order_id(value)
+    return normalized if normalized.lower() in query.lower() else None
 
 
 def _mentioned_text(value: Optional[str], query: str) -> Optional[str]:

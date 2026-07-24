@@ -18,9 +18,9 @@ def test_list_active_filters_by_product(seeded_db_path):
 
 
 def test_list_active_excludes_manually_disabled_promotions(seeded_db_path):
-    # PRM-006 (for FTW-008) is seeded with active = 0.
+    # PRM-009 (for FTW-002) is seeded with active = 0.
     repo = PromotionRepository(seeded_db_path)
-    promotions = repo.list_active(product_id="FTW-008")
+    promotions = repo.list_active(product_id="FTW-002")
     assert promotions == []
 
 

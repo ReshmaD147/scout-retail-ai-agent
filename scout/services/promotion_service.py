@@ -10,7 +10,7 @@ or estimates a discounted price.
 """
 
 from datetime import date
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -114,3 +114,52 @@ def calculate_price(
         final_price=best_price,
         applied_promotion_id=best_promotion.promotion_id,
     )
+
+
+def build_verified_promotion_summary(
+    product: Product,
+    promotions: List[Promotion],
+    promotion_id: str,
+    as_of: Optional[date] = None,
+) -> Optional[Dict[str, Any]]:
+    """Return verified display data for one active product promotion.
+
+    The product card can display this shape directly, but every value is
+    calculated here from product + promotion repository facts.
+    """
+    promotion = next((item for item in promotions if item.promotion_id == promotion_id), None)
+    if promotion is None or promotion.product_id != product.product_id:
+        return None
+    resolved_date = as_of if as_of is not None else date.today()
+    if not is_promotion_valid(promotion, resolved_date):
+        return None
+    price_result = calculate_price(product, promotions, resolved_date)
+    if price_result.applied_promotion_id != promotion.promotion_id:
+        return None
+    original_price = round(product.price, 2)
+    promotional_price = round(price_result.final_price, 2)
+    savings = round(original_price - promotional_price, 2)
+    if savings <= 0:
+        return None
+    if promotion.discount_percent is not None:
+        discount_type = "percent"
+        discount_value = float(promotion.discount_percent)
+        terms_summary = None
+    elif promotion.discount_amount is not None:
+        discount_type = "amount"
+        discount_value = float(promotion.discount_amount)
+        terms_summary = None
+    else:
+        return None
+    return {
+        "promotion_id": promotion.promotion_id,
+        "label": promotion.label,
+        "discount_type": discount_type,
+        "discount_value": discount_value,
+        "original_price": original_price,
+        "promotional_price": promotional_price,
+        "savings": savings,
+        "valid_until": promotion.end_date,
+        "terms_summary": terms_summary,
+        "verified": True,
+    }

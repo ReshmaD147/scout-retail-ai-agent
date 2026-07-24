@@ -149,6 +149,15 @@ def test_get_promotions_marks_current_promotion_valid():
     assert result.promotions[0].is_currently_valid is True
 
 
+def test_get_promotions_marks_service_industry_discount_valid():
+    result = get_promotions(product_id="FTW-008", as_of_date="2026-07-21")
+
+    assert result.error is None
+    assert len(result.promotions) == 1
+    assert result.promotions[0].promotion_id == "PRM-006"
+    assert result.promotions[0].is_currently_valid is True
+
+
 def test_get_promotions_rejects_bad_date_format():
     result = get_promotions(as_of_date="not-a-date")
 

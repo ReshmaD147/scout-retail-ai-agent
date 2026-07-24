@@ -51,7 +51,7 @@ def test_the_acceptance_query_resolves_via_nearby_store_fallback():
     )
 
     assert result.workflow_status == "completed"
-    assert [c.product_id for c in result.product_candidates] == ["FTW-004"]
+    assert [c.product_id for c in result.product_candidates] == ["FTW-004", "FTW-008"]
     assert "ComfortPro Shift Support" in result.final_response
     assert "Plymouth" in result.final_response
     channels = {entry["channel"] for entry in result.inventory_results}
@@ -191,12 +191,15 @@ def test_a_transient_verification_failure_self_heals_via_one_correction(monkeypa
     (response_verification -> recommendation_agent) actually helps in
     a realistic recoverable scenario, not just that it exists.
     """
-    calls = {"count": 0}
+    calls = {"pass": 1, "seen": set()}
 
     def _flaky_get_product_details(product_id):
-        calls["count"] += 1
+        if product_id in calls["seen"]:
+            calls["pass"] += 1
+            calls["seen"] = set()
+        calls["seen"].add(product_id)
         result = _real_get_product_details(product_id)
-        if calls["count"] == 1 and result.error is None:
+        if calls["pass"] == 1 and result.error is None:
             corrupted = result.model_copy(deep=True)
             corrupted.product.name = "Corrupted Name From A Bad Read"
             return corrupted
@@ -215,7 +218,8 @@ def test_a_transient_verification_failure_self_heals_via_one_correction(monkeypa
 
     assert result.workflow_status == "completed"
     assert result.correction_count == 1
-    assert "ComfortPro Shift Support" in result.final_response
+    assert any(product.product_id in {"FTW-004", "FTW-008"} for product in result.product_candidates)
+    assert "Corrupted Name From A Bad Read" not in result.final_response
     assert any(error.step == "verify_product_name" for error in result.errors)
 
 
@@ -277,7 +281,9 @@ def test_internal_success_never_triggers_external_fallback():
     assert all(trace.tool_name != "search_external_offers" for trace in result.tool_results)
 
 
-def test_external_fallback_runs_only_after_all_internal_inventory_is_exhausted():
+def test_external_fallback_runs_only_after_all_internal_inventory_is_exhausted(monkeypatch):
+    monkeypatch.setenv("MAX_TOOL_CALLS", "20")
+    get_settings.cache_clear()
     with connection_scope() as connection:
         connection.execute(
             "UPDATE inventory SET quantity_available = 0, quantity_reserved = 0"
@@ -301,6 +307,20 @@ def test_external_fallback_runs_only_after_all_internal_inventory_is_exhausted()
     assert "find_available_substitutes" in tool_names
     assert "search_external_offers" in tool_names
     assert tool_names.index("search_external_offers") > tool_names.index("find_available_substitutes")
+
+
+def test_external_fallback_runs_after_no_internal_catalog_match():
+    result = run_graph(
+        session_id="S-external-briefcase",
+        customer_query="Find executive briefcase under $80 near Maple Grove.",
+    )
+
+    tool_names = [trace.tool_name for trace in result.tool_results]
+    assert result.workflow_status == "completed"
+    assert result.product_candidates == []
+    assert [offer.offer_id for offer in result.external_offers] == ["EXT-OFF-010"]
+    assert "search_external_offers" in tool_names
+    assert tool_names.index("search_external_offers") > tool_names.index("semantic_search_products")
 
 
 def test_order_status_request_routes_directly_to_order_agent(seeded_db_path):

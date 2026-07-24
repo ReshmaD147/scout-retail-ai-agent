@@ -198,6 +198,12 @@ class Settings(BaseSettings):
     """Read-only return eligibility window after delivery or pickup."""
     order_exchange_window_days: int = Field(default=30, ge=0)
     """Read-only exchange eligibility window after delivery or pickup."""
+    session_memory_ttl_hours: int = Field(default=24, ge=1)
+    """How long temporary shopping/session memory remains usable."""
+    durable_preference_ttl_days: int = Field(default=365, ge=1)
+    """Default expiration window for explicit customer preferences."""
+    memory_enabled_default: bool = True
+    """Default memory setting for customers without an explicit control row."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
